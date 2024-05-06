@@ -15,10 +15,10 @@
       let
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs { inherit system overlays; };
-        shellCommands = (if pkgs.stdenv.isLinux then ''
-            export RUSTFLAGS="-C linker=clang -C link-arg=-fuse-ld=${pkgs.mold}/bin/mold"
+        rustFlags = (if pkgs.stdenv.isLinux then ''
+            -C linker=clang -C link-arg=-fuse-ld=${pkgs.mold}/bin/mold
           '' else ''
-            export RUSTFLAGS="-C linker=clang -C link-arg=-fuse-ld=lld -Z threads=8"
+            -C linker=clang -C link-arg=-fuse-ld=lld -Z threads=8
           '');
         rustToolchain = pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
       in
@@ -32,7 +32,8 @@
           ] ++ lib.optionals stdenv.isDarwin [libiconv llvmPackages.bintools]
           ++ lib.optionals stdenv.isLinux [mold clang];
 
-          shellHook = "${shellCommands}";
+          RUSTFLAGS = "${rustFlags}";
+          RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/src";
         };
       });
 }
