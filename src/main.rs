@@ -237,8 +237,23 @@ async fn contacts_new_get(_: AddContact) -> impl IntoResponse {
 }
 
 #[axum::debug_handler]
-async fn contacts_new_post(_: AddContact, Form(contact): Form<Contact<NoId>>) -> impl IntoResponse {
-    println!("{:?}", contact.first_name)
+async fn contacts_new_post(
+    _: AddContact,
+    State(state): State<AppState>,
+    Form(contact): Form<Contact<NoId>>,
+) -> impl IntoResponse {
+    let contact: Contact<ContactId> = Contact {
+        id: ContactId::new(),
+        first_name: contact.first_name,
+        last_name: contact.last_name,
+        email_address: contact.email_address,
+        phone: contact.phone,
+    };
+    {
+        let mut contacts = state.contacts.write().await;
+        contacts.push(contact);
+    }
+    Redirect::to(&Contacts.to_string())
 }
 
 fn new_contact_form(contact: Option<&Contact<NoId>>) -> Markup {
