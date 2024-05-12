@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::Arc;
 
@@ -17,6 +18,9 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
 use uuid::Uuid;
+
+/// TODO:
+/// - Axum flash
 
 #[derive(Clone)]
 struct AppState {
@@ -130,6 +134,43 @@ struct Contact<ID: IdType<ContactId>> {
     email_address: String,
 }
 
+#[derive(Deserialize, Default)]
+struct PendingContact {
+    first_name: Option<String>,
+    last_name: Option<String>,
+    phone: Option<String>,
+    email_address: Option<String>,
+}
+
+impl PendingContact {
+    fn to_valid(&self) -> Result<Contact<ContactId>, HashMap<&'static str, String>> {
+        match (
+            &self.first_name,
+            &self.last_name,
+            &self.phone,
+            &self.email_address,
+        ) {
+            (Some(first_name), Some(last_name), Some(phone), Some(email)) => Ok(Contact {
+                id: ContactId::new(),
+                first_name: first_name.to_owned(),
+                last_name: last_name.to_owned(),
+                phone: phone.to_owned(),
+                email_address: email.to_owned(),
+            }),
+            _ => {
+                // TODO
+                let mut errors = HashMap::new();
+
+                if self.last_name == None {
+                    errors.insert("last", "Missing last name".into());
+                }
+
+                Err(errors)
+            }
+        }
+    }
+}
+
 #[derive(Deserialize, TypedPath)]
 #[typed_path("/")]
 struct Root;
@@ -233,53 +274,48 @@ async fn contacts(
 struct AddContact;
 
 async fn contacts_new_get(_: AddContact) -> impl IntoResponse {
-    new_contact_form(None)
+    new_contact_form(PendingContact::default(), HashMap::new())
 }
 
-#[axum::debug_handler]
 async fn contacts_new_post(
     _: AddContact,
     State(state): State<AppState>,
-    Form(contact): Form<Contact<NoId>>,
+    Form(pending_contact): Form<PendingContact>,
 ) -> impl IntoResponse {
-    let contact: Contact<ContactId> = Contact {
-        id: ContactId::new(),
-        first_name: contact.first_name,
-        last_name: contact.last_name,
-        email_address: contact.email_address,
-        phone: contact.phone,
-    };
-    {
+    let contact = pending_contact.to_valid();
+    if let Err(errors) = contact {
+        return new_contact_form(pending_contact, errors).into_response();
+    } else if let Ok(contact) = contact {
         let mut contacts = state.contacts.write().await;
         contacts.push(contact);
     }
-    Redirect::to(&Contacts.to_string())
+    Redirect::to(&Contacts.to_string()).into_response()
 }
 
-fn new_contact_form(contact: Option<&Contact<NoId>>) -> Markup {
+fn new_contact_form<'a>(contact: PendingContact, errors: HashMap<&str, String>) -> Markup {
     page(html! {
         form action=(AddContact.to_string()) method="post" {
             fieldset {
                 legend { "Contact Values" }
                 p {
                     label for="email" {"Email"}
-                    input name="email_address" id="email" type="email" placeholder="Email" value=(contact.map(|contact| contact.email_address.clone()).unwrap_or_default());
-                    span .error {}
+                    input name="email_address" id="email" type="email" placeholder="Email" value=(contact.email_address.unwrap_or_default());
+                    span .error {(errors.get("email").cloned().unwrap_or_default())}
                 }
                 p {
                     label for="first_name" {"First Name"}
-                    input name="first_name" id="first_name" type="text" placeholder="First Name" value=(contact.map(|contact| contact.first_name.clone()).unwrap_or_default());
-                    span .error {}
+                    input name="first_name" id="first_name" type="text" placeholder="First Name" value=(contact.first_name.unwrap_or_default());
+                    span .error {(errors.get("first").cloned().unwrap_or_default())}
                 }
                 p {
                     label for="last_name" {"Last Name"}
-                    input name="last_name" id="last_name" type="text" placeholder="Last Name" value=(contact.map(|contact| contact.last_name.clone()).unwrap_or_default());
-                    span .error {}
+                    input name="last_name" id="last_name" type="text" placeholder="Last Name" value=(contact.last_name.unwrap_or_default());
+                    span .error {(errors.get("last").cloned().unwrap_or_default())}
                 }
                 p {
                     label for="phone" {"Phone"}
-                    input name="phone" id="phone" type="text" placeholder="Phone" value=(contact.map(|contact| contact.phone.clone()).unwrap_or_default());
-                    span .error {}
+                    input name="phone" id="phone" type="text" placeholder="Phone" value=(contact.phone.unwrap_or_default());
+                    span .error {(errors.get("phone").cloned().unwrap_or_default())}
                 }
                 button {"Save"}
             }
