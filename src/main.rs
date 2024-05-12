@@ -136,10 +136,20 @@ struct Contact<ID: IdType<ContactId>> {
 
 #[derive(Deserialize, Default)]
 struct PendingContact {
+    #[serde(deserialize_with = "non_empty_str")]
     first_name: Option<String>,
+    #[serde(deserialize_with = "non_empty_str")]
     last_name: Option<String>,
+    #[serde(deserialize_with = "non_empty_str")]
     phone: Option<String>,
+    #[serde(deserialize_with = "non_empty_str")]
     email_address: Option<String>,
+}
+
+fn non_empty_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    use serde::Deserialize;
+    let o: Option<String> = Option::deserialize(d)?;
+    Ok(o.filter(|s| !s.is_empty()))
 }
 
 impl PendingContact {
@@ -158,11 +168,19 @@ impl PendingContact {
                 email_address: email.to_owned(),
             }),
             _ => {
-                // TODO
                 let mut errors = HashMap::new();
 
-                if self.last_name == None {
+                if self.first_name.as_ref() == None {
+                    errors.insert("first", "Missing first name".into());
+                }
+                if self.last_name.as_ref() == None {
                     errors.insert("last", "Missing last name".into());
+                }
+                if self.phone.as_ref() == None {
+                    errors.insert("phone", "Missing phone".into());
+                }
+                if self.email_address.as_ref() == None {
+                    errors.insert("email", "Missing email address".into());
                 }
 
                 Err(errors)
