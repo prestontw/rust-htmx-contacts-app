@@ -10,6 +10,8 @@ use axum::Form;
 use axum::Router;
 use axum_extra::routing::RouterExt;
 use axum_extra::routing::TypedPath;
+use axum_flash::Flash;
+use axum_flash::IncomingFlashes;
 use maud::html;
 use maud::Markup;
 use maud::DOCTYPE;
@@ -19,12 +21,10 @@ use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
 use uuid::Uuid;
 
-/// TODO:
-/// - Axum flash
-
 #[derive(Clone)]
 struct AppState {
     contacts: Arc<RwLock<Vec<Contact<ContactId>>>>,
+    flash_config: axum_flash::Config,
 }
 
 #[tokio::main]
@@ -46,6 +46,7 @@ async fn main() {
                 id: ContactId::new(),
             },
         ])),
+        flash_config: axum_flash::Config::new(axum_flash::Key::generate()),
     };
     let app = Router::new()
         .typed_get(root)
@@ -63,6 +64,12 @@ async fn main() {
         .unwrap();
     println!("{}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
+}
+
+impl axum::extract::FromRef<AppState> for axum_flash::Config {
+    fn from_ref(state: &AppState) -> axum_flash::Config {
+        state.flash_config.clone()
+    }
 }
 
 pub trait IdType<T>: Copy + std::fmt::Display {
@@ -134,6 +141,9 @@ struct Contact<ID: IdType<ContactId>> {
     email_address: String,
 }
 
+/// Pending contact that is the information entered by the user. Could be
+/// missing fields or have invalid fields (eg, bogus email address format).
+/// Could experiment with just using a HashMap for the next endpoint.
 #[derive(Deserialize, Default)]
 struct PendingContact {
     #[serde(deserialize_with = "non_empty_str")]
@@ -196,17 +206,24 @@ async fn root(_: Root) -> impl IntoResponse {
     Redirect::permanent(&Contacts.to_string())
 }
 
-fn page(body: Markup) -> Markup {
-    html! {
-        (DOCTYPE)
-        head {
-            script src="https://unpkg.com/htmx.org@1.9.5" {}
-            meta charset="utf-8";
-        }
-        body .p-10.max-w-prose.m-auto {
-            (body)
-        }
-    }
+fn page(body: Markup, flashes: IncomingFlashes) -> (IncomingFlashes, Markup) {
+    (
+        flashes.clone(),
+        html! {
+            (DOCTYPE)
+            head {
+                script src="https://unpkg.com/htmx.org@1.9.5" {}
+                meta charset="utf-8";
+            }
+            body .p-10.max-w-prose.m-auto {
+                (body)
+
+                @for flash in &flashes {
+                    div .flash { (flash.1)}
+                }
+            }
+        },
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -235,6 +252,7 @@ async fn contacts(
     _: Contacts,
     Query(query): Query<GetContactsParams>,
     State(state): State<AppState>,
+    flashes: IncomingFlashes,
 ) -> impl IntoResponse {
     let contacts = {
         let contacts = state.contacts.read().await;
@@ -253,93 +271,109 @@ async fn contacts(
             contacts.clone()
         }
     };
-    page(html! {
-        form action=(Contacts.to_string()) method="get" {
-            label for="search" { "Search Term" }
-            input id="search" type="search" name="q" value=(query.query.unwrap_or_else(String::new));
-            input type="submit" value="Search";
-        }
-        table {
-            thead {
-                tr {
-                    th {"First"} th {"Last"} th {"Phone"} th {"Email"}
-                }
+    page(
+        html! {
+            form action=(Contacts.to_string()) method="get" {
+                label for="search" { "Search Term" }
+                input id="search" type="search" name="q" value=(query.query.unwrap_or_else(String::new));
+                input type="submit" value="Search";
             }
-            tbody {
-                @for contact in contacts {
+            table {
+                thead {
                     tr {
-                        td { (contact.first_name)}
-                        td { (contact.last_name)}
-                        td { (contact.phone)}
-                        td { (contact.email_address)}
-                        td {
-                            a href=(UpdateContact { id: contact.id}.to_string()) { "Edit" }
-                            " "
-                            a href=(ViewContact { id: contact.id}.to_string()) { "View" }
+                        th {"First"} th {"Last"} th {"Phone"} th {"Email"}
+                    }
+                }
+                tbody {
+                    @for contact in contacts {
+                        tr {
+                            td { (contact.first_name)}
+                            td { (contact.last_name)}
+                            td { (contact.phone)}
+                            td { (contact.email_address)}
+                            td {
+                                a href=(UpdateContact { id: contact.id}.to_string()) { "Edit" }
+                                " "
+                                a href=(ViewContact { id: contact.id}.to_string()) { "View" }
+                            }
                         }
                     }
                 }
             }
-        }
-        p {
-            a href=(AddContact.to_string()) { "Add Contact" }
-        }
-    })
+            p {
+                a href=(AddContact.to_string()) { "Add Contact" }
+            }
+        },
+        flashes,
+    )
 }
 
 #[derive(Deserialize, TypedPath)]
 #[typed_path("/contacts/new")]
 struct AddContact;
 
-async fn contacts_new_get(_: AddContact) -> impl IntoResponse {
-    new_contact_form(PendingContact::default(), HashMap::new())
+async fn contacts_new_get(_: AddContact, flashes: IncomingFlashes) -> impl IntoResponse {
+    new_contact_form(PendingContact::default(), HashMap::new(), flashes)
 }
 
 async fn contacts_new_post(
     _: AddContact,
     State(state): State<AppState>,
+    flashes: IncomingFlashes,
+    flash: Flash,
     Form(pending_contact): Form<PendingContact>,
 ) -> impl IntoResponse {
     let contact = pending_contact.to_valid();
     if let Err(errors) = contact {
-        return new_contact_form(pending_contact, errors).into_response();
+        return new_contact_form(pending_contact, errors, flashes).into_response();
     } else if let Ok(contact) = contact {
         let mut contacts = state.contacts.write().await;
         contacts.push(contact);
     }
-    Redirect::to(&Contacts.to_string()).into_response()
+    (
+        flash.success("Created a new contact!"),
+        Redirect::to(&Contacts.to_string()),
+    )
+        .into_response()
 }
 
-fn new_contact_form<'a>(contact: PendingContact, errors: HashMap<&str, String>) -> Markup {
-    page(html! {
-        form action=(AddContact.to_string()) method="post" {
-            fieldset {
-                legend { "Contact Values" }
-                p {
-                    label for="email" {"Email"}
-                    input name="email_address" id="email" type="email" placeholder="Email" value=(contact.email_address.unwrap_or_default());
-                    span .error {(errors.get("email").cloned().unwrap_or_default())}
+fn new_contact_form<'a>(
+    contact: PendingContact,
+    errors: HashMap<&str, String>,
+    flashes: IncomingFlashes,
+) -> impl IntoResponse {
+    page(
+        html! {
+            form action=(AddContact.to_string()) method="post" {
+                fieldset {
+                    legend { "Contact Values" }
+                    p {
+                        label for="email" {"Email"}
+                        input name="email_address" id="email" type="email" placeholder="Email" value=(contact.email_address.unwrap_or_default());
+                        span .error {(errors.get("email").cloned().unwrap_or_default())}
+                    }
+                    p {
+                        label for="first_name" {"First Name"}
+                        input name="first_name" id="first_name" type="text" placeholder="First Name" value=(contact.first_name.unwrap_or_default());
+                        span .error {(errors.get("first").cloned().unwrap_or_default())}
+                    }
+                    p {
+                        label for="last_name" {"Last Name"}
+                        input name="last_name" id="last_name" type="text" placeholder="Last Name" value=(contact.last_name.unwrap_or_default());
+                        span .error {(errors.get("last").cloned().unwrap_or_default())}
+                    }
+                    p {
+                        label for="phone" {"Phone"}
+                        input name="phone" id="phone" type="text" placeholder="Phone" value=(contact.phone.unwrap_or_default());
+                        span .error {(errors.get("phone").cloned().unwrap_or_default())}
+                    }
+                    button {"Save"}
                 }
-                p {
-                    label for="first_name" {"First Name"}
-                    input name="first_name" id="first_name" type="text" placeholder="First Name" value=(contact.first_name.unwrap_or_default());
-                    span .error {(errors.get("first").cloned().unwrap_or_default())}
-                }
-                p {
-                    label for="last_name" {"Last Name"}
-                    input name="last_name" id="last_name" type="text" placeholder="Last Name" value=(contact.last_name.unwrap_or_default());
-                    span .error {(errors.get("last").cloned().unwrap_or_default())}
-                }
-                p {
-                    label for="phone" {"Phone"}
-                    input name="phone" id="phone" type="text" placeholder="Phone" value=(contact.phone.unwrap_or_default());
-                    span .error {(errors.get("phone").cloned().unwrap_or_default())}
-                }
-                button {"Save"}
             }
-        }
-        p {
-            a href=(Contacts.to_string()) {"Back"}
-        }
-    })
+            p {
+                a href=(Contacts.to_string()) {"Back"}
+            }
+        },
+        flashes,
+    )
 }
