@@ -52,6 +52,7 @@ async fn main() {
         .typed_get(root)
         .typed_get(contacts)
         .typed_get(contacts_new_get)
+        .typed_get(contacts_view)
         .typed_post(contacts_new_post)
         .with_state(starting_state)
         .nest_service("/dist", ServeDir::new("dist"));
@@ -108,7 +109,7 @@ impl Display for NoId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(transparent)]
 struct ContactId(uuid::Uuid);
 
@@ -242,12 +243,6 @@ struct UpdateContact {
     id: ContactId,
 }
 
-#[derive(Deserialize, TypedPath)]
-#[typed_path("/contacts/:id")]
-struct ViewContact {
-    id: ContactId,
-}
-
 async fn contacts(
     _: Contacts,
     Query(query): Query<GetContactsParams>,
@@ -376,4 +371,51 @@ fn new_contact_form<'a>(
         },
         flashes,
     )
+}
+
+#[derive(Deserialize, TypedPath)]
+#[typed_path("/contacts/:id")]
+struct ViewContact {
+    id: ContactId,
+}
+
+async fn contacts_view(
+    contact_id: ViewContact,
+    State(state): State<AppState>,
+    flash: Flash,
+    flashes: IncomingFlashes,
+) -> impl IntoResponse {
+    let contact = {
+        let contacts = state.contacts.read().await;
+        contacts
+            .iter()
+            .find(|contact| contact.id == contact_id.id)
+            .cloned()
+    };
+    if let Some(contact) = contact {
+        page(
+            html! {
+                h1 {
+                    (contact.first_name) " "  (contact.last_name)
+                }
+                div {
+                    div { "Phone: " (contact.phone)}
+                    div { "Email: " (contact.email_address)}
+                }
+                p {
+                    a href=((UpdateContact {id: contact_id.id}).to_string()) { "Edit"}
+                    " "
+                    a href=(Contacts.to_string()) { "Back" }
+                }
+            },
+            flashes,
+        )
+        .into_response()
+    } else {
+        (
+            flash.warning("Could not find contact"),
+            Redirect::to(&Contacts.to_string()),
+        )
+            .into_response()
+    }
 }
