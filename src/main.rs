@@ -237,12 +237,6 @@ struct GetContactsParams {
 #[typed_path("/contacts")]
 struct Contacts;
 
-#[derive(Deserialize, TypedPath)]
-#[typed_path("/contacts/:id/edit")]
-struct UpdateContact {
-    id: ContactId,
-}
-
 async fn contacts(
     _: Contacts,
     Query(query): Query<GetContactsParams>,
@@ -270,7 +264,7 @@ async fn contacts(
         html! {
             form action=(Contacts.to_string()) method="get" {
                 label for="search" { "Search Term" }
-                input id="search" type="search" name="q" value=(query.query.unwrap_or_else(String::new));
+                input id="search" type="search" name="q" value=(query.query.as_deref().unwrap_or_default());
                 input type="submit" value="Search";
             }
             table {
@@ -345,22 +339,22 @@ fn new_contact_form<'a>(
                     p {
                         label for="email" {"Email"}
                         input name="email_address" id="email" type="email" placeholder="Email" value=(contact.email_address.unwrap_or_default());
-                        span .error {(errors.get("email").cloned().unwrap_or_default())}
+                        span .error {(errors.get("email").map(String::as_str).unwrap_or_default())}
                     }
                     p {
                         label for="first_name" {"First Name"}
                         input name="first_name" id="first_name" type="text" placeholder="First Name" value=(contact.first_name.unwrap_or_default());
-                        span .error {(errors.get("first").cloned().unwrap_or_default())}
+                        span .error {(errors.get("first").map(String::as_str).unwrap_or_default())}
                     }
                     p {
                         label for="last_name" {"Last Name"}
                         input name="last_name" id="last_name" type="text" placeholder="Last Name" value=(contact.last_name.unwrap_or_default());
-                        span .error {(errors.get("last").cloned().unwrap_or_default())}
+                        span .error {(errors.get("last").map(String::as_str).unwrap_or_default())}
                     }
                     p {
                         label for="phone" {"Phone"}
                         input name="phone" id="phone" type="text" placeholder="Phone" value=(contact.phone.unwrap_or_default());
-                        span .error {(errors.get("phone").cloned().unwrap_or_default())}
+                        span .error {(errors.get("phone").map(String::as_str).unwrap_or_default())}
                     }
                     button {"Save"}
                 }
@@ -418,4 +412,10 @@ async fn contacts_view(
         )
             .into_response()
     }
+}
+
+#[derive(Deserialize, TypedPath)]
+#[typed_path("/contacts/:id/edit")]
+struct UpdateContact {
+    id: ContactId,
 }
