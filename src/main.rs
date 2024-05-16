@@ -153,7 +153,7 @@ struct Contact<ID: IdType<ContactId>> {
 /// Pending contact that is the information entered by the user. Could be
 /// missing fields or have invalid fields (eg, bogus email address format).
 /// Could experiment with just using a HashMap for the next endpoint.
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Debug)]
 struct PendingContact {
     #[serde(deserialize_with = "non_empty_str")]
     first_name: Option<String>,
@@ -193,13 +193,15 @@ impl PendingContact {
             &self.phone,
             &self.email_address,
         ) {
-            (Some(first_name), Some(last_name), Some(phone), Some(email)) => Ok(Contact {
-                id: id.unwrap_or_else(ContactId::new),
-                first_name: first_name.to_owned(),
-                last_name: last_name.to_owned(),
-                phone: phone.to_owned(),
-                email_address: email.to_owned(),
-            }),
+            (Some(first_name), Some(last_name), Some(phone), Some(email)) if !email.is_empty() => {
+                Ok(Contact {
+                    id: id.unwrap_or_else(ContactId::new),
+                    first_name: first_name.to_owned(),
+                    last_name: last_name.to_owned(),
+                    phone: phone.to_owned(),
+                    email_address: email.to_owned(),
+                })
+            }
             _ => {
                 let mut errors = HashMap::new();
 
@@ -212,7 +214,9 @@ impl PendingContact {
                 if self.phone.as_ref() == None {
                     errors.insert("phone", "Missing phone".into());
                 }
-                if self.email_address.as_ref() == None {
+                if self.email_address.as_ref().is_none()
+                    || self.email_address.as_ref().is_some_and(String::is_empty)
+                {
                     errors.insert("email", "Missing email address".into());
                 }
 
@@ -508,6 +512,7 @@ fn edit_contact_form<'a>(
                         input name="email_address" id="email" type="email"
                         hx-get=(ContactEmail{id: id}.to_string())
                         hx-target="next .error"
+                        hx-trigger="change, keyup delay:200ms changed"
                         placeholder="Email" value=(contact.email_address.unwrap_or_default());
                         span .error {(errors.get("email").map(String::as_str).unwrap_or_default())}
                     }
@@ -576,12 +581,23 @@ struct EmailValidationParams {
 }
 
 async fn contacts_email_get(
-    _email: ContactEmail,
+    ContactEmail { id }: ContactEmail,
     Query(query): Query<EmailValidationParams>,
+    State(state): State<AppState>,
 ) -> impl IntoResponse {
-    if query.email_address.is_none() || query.email_address.is_some_and(|email| email.is_empty()) {
-        "Missing email address"
-    } else {
-        ""
+    let contact = {
+        let contacts = state.contacts.read().await;
+        contacts.iter().find(|contact| contact.id == id).cloned()
+    };
+    if contact.is_none() {
+        return "".into_response();
     }
+    let mut contact: PendingContact = contact.unwrap().into();
+    contact.email_address = query.email_address;
+    contact
+        .to_valid(Some(id))
+        .err()
+        .and_then(|errors| errors.get("email").cloned())
+        .unwrap_or_default()
+        .into_response()
 }
