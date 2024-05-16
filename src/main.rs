@@ -56,7 +56,7 @@ async fn main() {
         .typed_get(contacts_edit_get)
         .typed_post(contacts_new_post)
         .typed_post(contacts_edit_post)
-        .typed_post(contacts_delete)
+        .typed_delete(contacts_delete)
         .with_state(starting_state)
         .nest_service("/dist", ServeDir::new("dist"));
 
@@ -521,9 +521,10 @@ fn edit_contact_form<'a>(
                     button {"Save"}
                 }
             }
-            form action=(DeleteContact{id}) method="post" {
-                button {"Delete Contact"}
-            }
+            button hx-delete=(ViewContact{id})
+                hx-target="body"
+                hx-push-url="true"
+                hx-confirm="Are you sure you want to delete this contact?" {"Delete Contact"}
             p {
                 a href=(Contacts.to_string()) {"Back"}
             }
@@ -532,14 +533,8 @@ fn edit_contact_form<'a>(
     )
 }
 
-#[derive(Deserialize, TypedPath)]
-#[typed_path("/contacts/:id/delete")]
-struct DeleteContact {
-    id: ContactId,
-}
-
 async fn contacts_delete(
-    DeleteContact { id }: DeleteContact,
+    ViewContact { id }: ViewContact,
     State(state): State<AppState>,
     flash: Flash,
 ) -> impl IntoResponse {
