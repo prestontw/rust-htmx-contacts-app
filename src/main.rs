@@ -53,7 +53,9 @@ async fn main() {
         .typed_get(contacts)
         .typed_get(contacts_new_get)
         .typed_get(contacts_view)
+        .typed_get(contacts_edit_get)
         .typed_post(contacts_new_post)
+        .typed_post(contacts_edit_post)
         .with_state(starting_state)
         .nest_service("/dist", ServeDir::new("dist"));
 
@@ -163,8 +165,22 @@ fn non_empty_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String
     Ok(o.filter(|s| !s.is_empty()))
 }
 
+impl From<Contact<ContactId>> for PendingContact {
+    fn from(value: Contact<ContactId>) -> Self {
+        Self {
+            first_name: Some(value.first_name),
+            last_name: Some(value.last_name),
+            phone: Some(value.phone),
+            email_address: Some(value.email_address),
+        }
+    }
+}
+
 impl PendingContact {
-    fn to_valid(&self) -> Result<Contact<ContactId>, HashMap<&'static str, String>> {
+    fn to_valid(
+        &self,
+        id: Option<ContactId>,
+    ) -> Result<Contact<ContactId>, HashMap<&'static str, String>> {
         match (
             &self.first_name,
             &self.last_name,
@@ -172,7 +188,7 @@ impl PendingContact {
             &self.email_address,
         ) {
             (Some(first_name), Some(last_name), Some(phone), Some(email)) => Ok(Contact {
-                id: ContactId::new(),
+                id: id.unwrap_or_else(ContactId::new),
                 first_name: first_name.to_owned(),
                 last_name: last_name.to_owned(),
                 phone: phone.to_owned(),
@@ -312,7 +328,7 @@ async fn contacts_new_post(
     flash: Flash,
     Form(pending_contact): Form<PendingContact>,
 ) -> impl IntoResponse {
-    let contact = pending_contact.to_valid();
+    let contact = pending_contact.to_valid(None);
     if let Err(errors) = contact {
         return new_contact_form(pending_contact, errors, flashes).into_response();
     } else if let Ok(contact) = contact {
@@ -417,5 +433,106 @@ async fn contacts_view(
 #[derive(Deserialize, TypedPath)]
 #[typed_path("/contacts/:id/edit")]
 struct UpdateContact {
+    id: ContactId,
+}
+
+async fn contacts_edit_get(
+    UpdateContact { id }: UpdateContact,
+    State(state): State<AppState>,
+    flash: Flash,
+    flashes: IncomingFlashes,
+) -> impl IntoResponse {
+    let contact = {
+        let contacts = state.contacts.read().await;
+        contacts.iter().find(|contact| contact.id == id).cloned()
+    };
+    if contact.is_none() {
+        return (
+            flash.warning("Could not find contact"),
+            Redirect::to(&Contacts.to_string()),
+        )
+            .into_response();
+    }
+    edit_contact_form(contact.unwrap().into(), id, HashMap::new(), flashes).into_response()
+}
+
+async fn contacts_edit_post(
+    UpdateContact { id }: UpdateContact,
+    State(state): State<AppState>,
+    flashes: IncomingFlashes,
+    flash: Flash,
+    Form(pending_contact): Form<PendingContact>,
+) -> impl IntoResponse {
+    let contact = pending_contact.to_valid(Some(id));
+    if let Err(errors) = contact {
+        return edit_contact_form(pending_contact, id, errors, flashes).into_response();
+    } else if let Ok(contact) = contact {
+        let mut contacts = state.contacts.write().await;
+        let found_contact = contacts.iter_mut().find(|contact| contact.id == id);
+        if found_contact.is_none() {
+            return (
+                flash.success("Could not update not-found contact!"),
+                Redirect::to(&Contacts.to_string()),
+            )
+                .into_response();
+        }
+        let found_contact = found_contact.unwrap();
+        *found_contact = contact;
+    }
+    (
+        flash.success("Updated contact!"),
+        Redirect::to(&ViewContact { id }.to_string()),
+    )
+        .into_response()
+}
+
+fn edit_contact_form<'a>(
+    contact: PendingContact,
+    id: ContactId,
+    errors: HashMap<&str, String>,
+    flashes: IncomingFlashes,
+) -> impl IntoResponse {
+    page(
+        html! {
+            form action=(UpdateContact{id}.to_string()) method="post" {
+                fieldset {
+                    legend { "Contact Values" }
+                    p {
+                        label for="email" {"Email"}
+                        input name="email_address" id="email" type="email" placeholder="Email" value=(contact.email_address.unwrap_or_default());
+                        span .error {(errors.get("email").map(String::as_str).unwrap_or_default())}
+                    }
+                    p {
+                        label for="first_name" {"First Name"}
+                        input name="first_name" id="first_name" type="text" placeholder="First Name" value=(contact.first_name.unwrap_or_default());
+                        span .error {(errors.get("first").map(String::as_str).unwrap_or_default())}
+                    }
+                    p {
+                        label for="last_name" {"Last Name"}
+                        input name="last_name" id="last_name" type="text" placeholder="Last Name" value=(contact.last_name.unwrap_or_default());
+                        span .error {(errors.get("last").map(String::as_str).unwrap_or_default())}
+                    }
+                    p {
+                        label for="phone" {"Phone"}
+                        input name="phone" id="phone" type="text" placeholder="Phone" value=(contact.phone.unwrap_or_default());
+                        span .error {(errors.get("phone").map(String::as_str).unwrap_or_default())}
+                    }
+                    button {"Save"}
+                }
+            }
+            form action=(DeleteContact{id}) method="post" {
+                button {"Delete Contact"}
+            }
+            p {
+                a href=(Contacts.to_string()) {"Back"}
+            }
+        },
+        flashes,
+    )
+}
+
+#[derive(Deserialize, TypedPath)]
+#[typed_path("/contacts/:id/delete")]
+struct DeleteContact {
     id: ContactId,
 }
