@@ -230,10 +230,10 @@ fn page(body: Markup, flashes: IncomingFlashes) -> (IncomingFlashes, Markup) {
         html! {
             (DOCTYPE)
             head {
-                script src="https://unpkg.com/htmx.org@1.9.5" {}
+                script src="https://unpkg.com/htmx.org@1.9.5" crossorigin="anonymous" {}
                 meta charset="utf-8";
             }
-            body .p-10.max-w-prose.m-auto {
+            body .p-10.max-w-prose.m-auto hx-boost="true" {
                 (body)
 
                 @for flash in &flashes {
