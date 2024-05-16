@@ -21,6 +21,10 @@ use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
 use uuid::Uuid;
 
+// TODO:
+// - use diesel
+// - style with tailwind
+
 #[derive(Clone)]
 struct AppState {
     contacts: Arc<RwLock<Vec<Contact<ContactId>>>>,
@@ -54,6 +58,7 @@ async fn main() {
         .typed_get(contacts_new_get)
         .typed_get(contacts_view)
         .typed_get(contacts_edit_get)
+        .typed_get(contacts_email_get)
         .typed_post(contacts_new_post)
         .typed_post(contacts_edit_post)
         .typed_delete(contacts_delete)
@@ -500,7 +505,10 @@ fn edit_contact_form<'a>(
                     legend { "Contact Values" }
                     p {
                         label for="email" {"Email"}
-                        input name="email_address" id="email" type="email" placeholder="Email" value=(contact.email_address.unwrap_or_default());
+                        input name="email_address" id="email" type="email"
+                        hx-get=(ContactEmail{id: id}.to_string())
+                        hx-target="next .error"
+                        placeholder="Email" value=(contact.email_address.unwrap_or_default());
                         span .error {(errors.get("email").map(String::as_str).unwrap_or_default())}
                     }
                     p {
@@ -554,4 +562,26 @@ async fn contacts_delete(
         Redirect::to(&Contacts.to_string()),
     )
         .into_response()
+}
+
+#[derive(Deserialize, TypedPath)]
+#[typed_path("/contacts/:id/email")]
+struct ContactEmail {
+    id: ContactId,
+}
+
+#[derive(Debug, Deserialize)]
+struct EmailValidationParams {
+    email_address: Option<String>,
+}
+
+async fn contacts_email_get(
+    _email: ContactEmail,
+    Query(query): Query<EmailValidationParams>,
+) -> impl IntoResponse {
+    if query.email_address.is_none() || query.email_address.is_some_and(|email| email.is_empty()) {
+        "Missing email address"
+    } else {
+        ""
+    }
 }
