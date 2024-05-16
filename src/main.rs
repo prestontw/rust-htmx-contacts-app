@@ -56,6 +56,7 @@ async fn main() {
         .typed_get(contacts_edit_get)
         .typed_post(contacts_new_post)
         .typed_post(contacts_edit_post)
+        .typed_post(contacts_delete)
         .with_state(starting_state)
         .nest_service("/dist", ServeDir::new("dist"));
 
@@ -535,4 +536,27 @@ fn edit_contact_form<'a>(
 #[typed_path("/contacts/:id/delete")]
 struct DeleteContact {
     id: ContactId,
+}
+
+async fn contacts_delete(
+    DeleteContact { id }: DeleteContact,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> impl IntoResponse {
+    let mut contacts = state.contacts.write().await;
+    let found_contact = contacts.iter().position(|contact| contact.id == id);
+    if found_contact.is_none() {
+        return (
+            flash.success("Could not delete not-found contact!"),
+            Redirect::to(&Contacts.to_string()),
+        )
+            .into_response();
+    }
+    contacts.swap_remove(found_contact.unwrap());
+
+    (
+        flash.success("Deleted contact!"),
+        Redirect::to(&Contacts.to_string()),
+    )
+        .into_response()
 }
