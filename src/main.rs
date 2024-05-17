@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use axum::extract::Query;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::response::Redirect;
 use axum::Form;
@@ -339,6 +340,7 @@ async fn contacts(
     _: Contacts,
     Query(query): Query<GetContactsParams>,
     State(state): State<AppState>,
+    headers: HeaderMap,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {
     let page_number = query.page.unwrap_or(0);
@@ -365,11 +367,36 @@ async fn contacts(
         }
     };
     let contacts_len = contacts.len();
+    let rows = html! {
+        @for contact in contacts {
+            tr {
+                td { (contact.first_name)}
+                td { (contact.last_name)}
+                td { (contact.phone)}
+                td { (contact.email_address)}
+                td {
+                    a href=(UpdateContact { id: contact.id}.to_string()) { "Edit" }
+                    " "
+                    a href=(ViewContact { id: contact.id}.to_string()) { "View" }
+                }
+            }
+        }
+    };
+    if headers.get("HX-Trigger").is_some_and(|val| val == "search") {
+        return rows.into_response();
+    }
+    // todo: investigate adding new tbody when reach end of hte list
     page(
         html! {
-            form action=(Contacts.to_string()) method="get" {
+            form .tool-bar action=(Contacts.to_string()) method="get" {
                 label for="search" { "Search Term" }
-                input id="search" type="search" name="q" value=(query.query.as_deref().unwrap_or_default());
+                input id="search" type="search" name="q" value=(query.query.as_deref().unwrap_or_default())
+                    hx-get=(Contacts.to_string())
+                    hx-trigger="change, keyup delay:200ms changed"
+                    hx-target="tbody"
+                    hx-push-url="true"
+                    hx-indicator="#spinner";
+                img #spinner .htmx-indicator src="/dist/img/spinning-circles.svg" alt="Request In Flight";
                 input type="submit" value="Search";
             }
             table {
@@ -379,19 +406,7 @@ async fn contacts(
                     }
                 }
                 tbody {
-                    @for contact in contacts {
-                        tr {
-                            td { (contact.first_name)}
-                            td { (contact.last_name)}
-                            td { (contact.phone)}
-                            td { (contact.email_address)}
-                            td {
-                                a href=(UpdateContact { id: contact.id}.to_string()) { "Edit" }
-                                " "
-                                a href=(ViewContact { id: contact.id}.to_string()) { "View" }
-                            }
-                        }
-                    }
+                    (rows)
                 }
                 @if contacts_len >= 10 {
                     tr {
@@ -410,7 +425,7 @@ async fn contacts(
             }
         },
         flashes,
-    )
+    ).into_response()
 }
 
 #[derive(Serialize)]
