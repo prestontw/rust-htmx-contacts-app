@@ -49,6 +49,69 @@ async fn main() {
                 phone: "222-999-8899".into(),
                 id: ContactId::new(),
             },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
         ])),
         flash_config: axum_flash::Config::new(axum_flash::Key::generate()),
     };
@@ -66,7 +129,15 @@ async fn main() {
         .nest_service("/dist", ServeDir::new("dist"));
 
     #[cfg(debug_assertions)]
-    let app = app.layer(tower_livereload::LiveReloadLayer::new());
+    use axum::extract::Request;
+    #[cfg(debug_assertions)]
+    fn not_htmx_predicate<T>(req: &Request<T>) -> bool {
+        !req.headers().contains_key("hx-request")
+    }
+
+    #[cfg(debug_assertions)]
+    let app =
+        app.layer(tower_livereload::LiveReloadLayer::new().request_predicate(not_htmx_predicate));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
@@ -257,6 +328,7 @@ fn page(body: Markup, flashes: IncomingFlashes) -> (IncomingFlashes, Markup) {
 struct GetContactsParams {
     #[serde(rename = "q")]
     query: Option<String>,
+    page: Option<u32>,
 }
 
 #[derive(Deserialize, TypedPath)]
@@ -269,6 +341,7 @@ async fn contacts(
     State(state): State<AppState>,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {
+    let page_number = query.page.unwrap_or(0);
     let contacts = {
         let contacts = state.contacts.read().await;
         if let Some(q) = &query.query {
@@ -283,9 +356,15 @@ async fn contacts(
                 .cloned()
                 .collect::<Vec<Contact<_>>>()
         } else {
-            contacts.clone()
+            contacts
+                .chunks(10)
+                .skip(page_number as usize)
+                .next()
+                .unwrap_or_default()
+                .to_vec()
         }
     };
+    let contacts_len = contacts.len();
     page(
         html! {
             form action=(Contacts.to_string()) method="get" {
@@ -318,9 +397,22 @@ async fn contacts(
             p {
                 a href=(AddContact.to_string()) { "Add Contact" }
             }
+            span style="float: right" {
+                @if page_number > 0 {
+                    a href=(Contacts.with_query_params(Pagination{page: page_number - 1})) { "Previous"}
+                }
+                @if contacts_len >= 10 {
+                    a href=(Contacts.with_query_params(Pagination{page: page_number + 1})) { "Next"}
+                }
+            }
         },
         flashes,
     )
+}
+
+#[derive(Serialize)]
+struct Pagination {
+    page: u32,
 }
 
 #[derive(Deserialize, TypedPath)]
