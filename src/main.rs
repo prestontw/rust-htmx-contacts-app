@@ -21,6 +21,10 @@ use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
 use uuid::Uuid;
 
+// TODO:
+// - use diesel
+// - style with tailwind
+
 #[derive(Clone)]
 struct AppState {
     contacts: Arc<RwLock<Vec<Contact<ContactId>>>>,
@@ -45,6 +49,69 @@ async fn main() {
                 phone: "222-999-8899".into(),
                 id: ContactId::new(),
             },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
+            Contact {
+                first_name: "Joe".into(),
+                last_name: "Smith".into(),
+                email_address: "joe.smith@example.com".into(),
+                phone: "222-999-8899".into(),
+                id: ContactId::new(),
+            },
         ])),
         flash_config: axum_flash::Config::new(axum_flash::Key::generate()),
     };
@@ -54,14 +121,23 @@ async fn main() {
         .typed_get(contacts_new_get)
         .typed_get(contacts_view)
         .typed_get(contacts_edit_get)
+        .typed_get(contacts_email_get)
         .typed_post(contacts_new_post)
         .typed_post(contacts_edit_post)
-        .typed_post(contacts_delete)
+        .typed_delete(contacts_delete)
         .with_state(starting_state)
         .nest_service("/dist", ServeDir::new("dist"));
 
     #[cfg(debug_assertions)]
-    let app = app.layer(tower_livereload::LiveReloadLayer::new());
+    use axum::extract::Request;
+    #[cfg(debug_assertions)]
+    fn not_htmx_predicate<T>(req: &Request<T>) -> bool {
+        !req.headers().contains_key("hx-request")
+    }
+
+    #[cfg(debug_assertions)]
+    let app =
+        app.layer(tower_livereload::LiveReloadLayer::new().request_predicate(not_htmx_predicate));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
@@ -148,7 +224,7 @@ struct Contact<ID: IdType<ContactId>> {
 /// Pending contact that is the information entered by the user. Could be
 /// missing fields or have invalid fields (eg, bogus email address format).
 /// Could experiment with just using a HashMap for the next endpoint.
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Debug)]
 struct PendingContact {
     #[serde(deserialize_with = "non_empty_str")]
     first_name: Option<String>,
@@ -188,13 +264,15 @@ impl PendingContact {
             &self.phone,
             &self.email_address,
         ) {
-            (Some(first_name), Some(last_name), Some(phone), Some(email)) => Ok(Contact {
-                id: id.unwrap_or_else(ContactId::new),
-                first_name: first_name.to_owned(),
-                last_name: last_name.to_owned(),
-                phone: phone.to_owned(),
-                email_address: email.to_owned(),
-            }),
+            (Some(first_name), Some(last_name), Some(phone), Some(email)) if !email.is_empty() => {
+                Ok(Contact {
+                    id: id.unwrap_or_else(ContactId::new),
+                    first_name: first_name.to_owned(),
+                    last_name: last_name.to_owned(),
+                    phone: phone.to_owned(),
+                    email_address: email.to_owned(),
+                })
+            }
             _ => {
                 let mut errors = HashMap::new();
 
@@ -207,7 +285,9 @@ impl PendingContact {
                 if self.phone.as_ref() == None {
                     errors.insert("phone", "Missing phone".into());
                 }
-                if self.email_address.as_ref() == None {
+                if self.email_address.as_ref().is_none()
+                    || self.email_address.as_ref().is_some_and(String::is_empty)
+                {
                     errors.insert("email", "Missing email address".into());
                 }
 
@@ -230,10 +310,10 @@ fn page(body: Markup, flashes: IncomingFlashes) -> (IncomingFlashes, Markup) {
         html! {
             (DOCTYPE)
             head {
-                script src="https://unpkg.com/htmx.org@1.9.5" {}
+                script src="https://unpkg.com/htmx.org@1.9.5" crossorigin="anonymous" {}
                 meta charset="utf-8";
             }
-            body .p-10.max-w-prose.m-auto {
+            body .p-10.max-w-prose.m-auto hx-boost="true" {
                 (body)
 
                 @for flash in &flashes {
@@ -248,6 +328,7 @@ fn page(body: Markup, flashes: IncomingFlashes) -> (IncomingFlashes, Markup) {
 struct GetContactsParams {
     #[serde(rename = "q")]
     query: Option<String>,
+    page: Option<u32>,
 }
 
 #[derive(Deserialize, TypedPath)]
@@ -260,6 +341,7 @@ async fn contacts(
     State(state): State<AppState>,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {
+    let page_number = query.page.unwrap_or(0);
     let contacts = {
         let contacts = state.contacts.read().await;
         if let Some(q) = &query.query {
@@ -274,9 +356,15 @@ async fn contacts(
                 .cloned()
                 .collect::<Vec<Contact<_>>>()
         } else {
-            contacts.clone()
+            contacts
+                .chunks(10)
+                .skip(page_number as usize)
+                .next()
+                .unwrap_or_default()
+                .to_vec()
         }
     };
+    let contacts_len = contacts.len();
     page(
         html! {
             form action=(Contacts.to_string()) method="get" {
@@ -305,6 +393,17 @@ async fn contacts(
                         }
                     }
                 }
+                @if contacts_len >= 10 {
+                    tr {
+                        td colspan="5" style="text-align: center" {
+                            span hx-target="closest tr"
+                                hx-trigger="revealed"
+                                hx-swap="outerHTML"
+                                hx-select="tbody > tr"
+                                hx-get=(Contacts.with_query_params(Pagination{page: page_number + 1})) { "Loading More..." }
+                        }
+                    }
+                }
             }
             p {
                 a href=(AddContact.to_string()) { "Add Contact" }
@@ -312,6 +411,11 @@ async fn contacts(
         },
         flashes,
     )
+}
+
+#[derive(Serialize)]
+struct Pagination {
+    page: u32,
 }
 
 #[derive(Deserialize, TypedPath)]
@@ -500,7 +604,11 @@ fn edit_contact_form<'a>(
                     legend { "Contact Values" }
                     p {
                         label for="email" {"Email"}
-                        input name="email_address" id="email" type="email" placeholder="Email" value=(contact.email_address.unwrap_or_default());
+                        input name="email_address" id="email" type="email"
+                        hx-get=(ContactEmail{id: id}.to_string())
+                        hx-target="next .error"
+                        hx-trigger="change, keyup delay:200ms changed"
+                        placeholder="Email" value=(contact.email_address.unwrap_or_default());
                         span .error {(errors.get("email").map(String::as_str).unwrap_or_default())}
                     }
                     p {
@@ -521,9 +629,10 @@ fn edit_contact_form<'a>(
                     button {"Save"}
                 }
             }
-            form action=(DeleteContact{id}) method="post" {
-                button {"Delete Contact"}
-            }
+            button hx-delete=(ViewContact{id})
+                hx-target="body"
+                hx-push-url="true"
+                hx-confirm="Are you sure you want to delete this contact?" {"Delete Contact"}
             p {
                 a href=(Contacts.to_string()) {"Back"}
             }
@@ -532,14 +641,8 @@ fn edit_contact_form<'a>(
     )
 }
 
-#[derive(Deserialize, TypedPath)]
-#[typed_path("/contacts/:id/delete")]
-struct DeleteContact {
-    id: ContactId,
-}
-
 async fn contacts_delete(
-    DeleteContact { id }: DeleteContact,
+    ViewContact { id }: ViewContact,
     State(state): State<AppState>,
     flash: Flash,
 ) -> impl IntoResponse {
@@ -558,5 +661,38 @@ async fn contacts_delete(
         flash.success("Deleted contact!"),
         Redirect::to(&Contacts.to_string()),
     )
+        .into_response()
+}
+
+#[derive(Deserialize, TypedPath)]
+#[typed_path("/contacts/:id/email")]
+struct ContactEmail {
+    id: ContactId,
+}
+
+#[derive(Debug, Deserialize)]
+struct EmailValidationParams {
+    email_address: Option<String>,
+}
+
+async fn contacts_email_get(
+    ContactEmail { id }: ContactEmail,
+    Query(query): Query<EmailValidationParams>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let contact = {
+        let contacts = state.contacts.read().await;
+        contacts.iter().find(|contact| contact.id == id).cloned()
+    };
+    if contact.is_none() {
+        return "".into_response();
+    }
+    let mut contact: PendingContact = contact.unwrap().into();
+    contact.email_address = query.email_address;
+    contact
+        .to_valid(Some(id))
+        .err()
+        .and_then(|errors| errors.get("email").cloned())
+        .unwrap_or_default()
         .into_response()
 }
