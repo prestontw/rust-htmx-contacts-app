@@ -393,17 +393,19 @@ async fn contacts(
                         }
                     }
                 }
+                @if contacts_len >= 10 {
+                    tr {
+                        td colspan="5" style="text-align: center" {
+                            button hx-target="closest tr"
+                                hx-swap="outerHTML"
+                                hx-select="tbody > tr"
+                                hx-get=(Contacts.with_query_params(Pagination{page: page_number + 1})) { "Load More" }
+                        }
+                    }
+                }
             }
             p {
                 a href=(AddContact.to_string()) { "Add Contact" }
-            }
-            span style="float: right" {
-                @if page_number > 0 {
-                    a href=(Contacts.with_query_params(Pagination{page: page_number - 1})) { "Previous"}
-                }
-                @if contacts_len >= 10 {
-                    a href=(Contacts.with_query_params(Pagination{page: page_number + 1})) { "Next"}
-                }
             }
         },
         flashes,
