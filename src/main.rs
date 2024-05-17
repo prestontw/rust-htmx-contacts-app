@@ -396,10 +396,11 @@ async fn contacts(
                 @if contacts_len >= 10 {
                     tr {
                         td colspan="5" style="text-align: center" {
-                            button hx-target="closest tr"
+                            span hx-target="closest tr"
+                                hx-trigger="revealed"
                                 hx-swap="outerHTML"
                                 hx-select="tbody > tr"
-                                hx-get=(Contacts.with_query_params(Pagination{page: page_number + 1})) { "Load More" }
+                                hx-get=(Contacts.with_query_params(Pagination{page: page_number + 1})) { "Loading More..." }
                         }
                     }
                 }
