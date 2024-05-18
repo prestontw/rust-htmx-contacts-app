@@ -408,15 +408,15 @@ async fn contacts(
                 }
                 tbody {
                     (rows)
-                }
-                @if contacts_len >= 10 {
-                    tr {
-                        td colspan="5" style="text-align: center" {
-                            span hx-target="closest tr"
-                                hx-trigger="revealed"
-                                hx-swap="outerHTML"
-                                hx-select="tbody > tr"
-                                hx-get=(Contacts.with_query_params(Pagination{page: page_number + 1})) { "Loading More..." }
+                    @if contacts_len >= 10 {
+                        tr {
+                            td colspan="5" style="text-align: center" {
+                                span hx-target="closest tr"
+                                    hx-trigger="revealed"
+                                    hx-swap="outerHTML"
+                                    hx-select="tbody > tr"
+                                    hx-get=(Contacts.with_query_params(Pagination{page: page_number + 1})) { "Loading More..." }
+                            }
                         }
                     }
                 }
