@@ -121,6 +121,7 @@ async fn main() {
         .typed_get(contacts)
         .typed_get(contacts_new_get)
         .typed_get(contacts_view)
+        .typed_get(contacts_count)
         .typed_get(contacts_edit_get)
         .typed_get(contacts_email_get)
         .typed_post(contacts_new_post)
@@ -422,6 +423,8 @@ async fn contacts(
             }
             p {
                 a href=(AddContact.to_string()) { "Add Contact" }
+                " "
+                span hx-get=(ContactsCount.to_string()) hx-trigger="load" {}
             }
         },
         flashes,
@@ -431,6 +434,15 @@ async fn contacts(
 #[derive(Serialize)]
 struct Pagination {
     page: u32,
+}
+
+#[derive(Deserialize, TypedPath)]
+#[typed_path("/contacts/count")]
+struct ContactsCount;
+
+async fn contacts_count(_: ContactsCount, State(state): State<AppState>) -> impl IntoResponse {
+    let count = state.contacts.read().await.len();
+    format!("({count} total Contacts)")
 }
 
 #[derive(Deserialize, TypedPath)]
