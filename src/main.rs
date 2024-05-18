@@ -379,6 +379,10 @@ async fn contacts(
                     a href=(UpdateContact { id: contact.id}.to_string()) { "Edit" }
                     " "
                     a href=(ViewContact { id: contact.id}.to_string()) { "View" }
+                    " "
+                    a href="#" hx-delete=(ViewContact {id: contact.id}.to_string())
+                        hx-confirm="Are you sure you want to delete this contact?"
+                        hx-target="body" { "Delete" }
                 }
             }
         }
