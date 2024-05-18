@@ -424,7 +424,7 @@ async fn contacts(
             p {
                 a href=(AddContact.to_string()) { "Add Contact" }
                 " "
-                span hx-get=(ContactsCount.to_string()) hx-trigger="load" {
+                span hx-get=(ContactsCount.to_string()) hx-trigger="revealed" {
                     img #spinner .htmx-indicator src="/dist/img/spinning-circles.svg";
                 }
             }
