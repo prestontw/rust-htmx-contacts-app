@@ -4,10 +4,11 @@ use std::sync::Arc;
 
 use axum::extract::Query;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::response::Redirect;
-use axum::Form;
 use axum::Router;
+use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
 use axum_extra::routing::TypedPath;
 use axum_flash::Flash;
@@ -24,6 +25,8 @@ use uuid::Uuid;
 // TODO:
 // - use diesel
 // - style with tailwind
+//   - https://www.crocodile.dev/blog/css-transitions-with-tailwind-and-htmx
+//   - https://tailwindcss.com/docs/plugins#adding-variants
 
 #[derive(Clone)]
 struct AppState {
@@ -120,11 +123,13 @@ async fn main() {
         .typed_get(contacts)
         .typed_get(contacts_new_get)
         .typed_get(contacts_view)
+        .typed_get(contacts_count)
         .typed_get(contacts_edit_get)
         .typed_get(contacts_email_get)
         .typed_post(contacts_new_post)
         .typed_post(contacts_edit_post)
         .typed_delete(contacts_delete)
+        .typed_delete(contacts_delete_all)
         .with_state(starting_state)
         .nest_service("/dist", ServeDir::new("dist"));
 
@@ -311,6 +316,7 @@ fn page(body: Markup, flashes: IncomingFlashes) -> (IncomingFlashes, Markup) {
             (DOCTYPE)
             head {
                 script src="https://unpkg.com/htmx.org@1.9.5" crossorigin="anonymous" {}
+                link rel="stylesheet" href="/dist/output.css";
                 meta charset="utf-8";
             }
             body .p-10.max-w-prose.m-auto hx-boost="true" {
@@ -339,6 +345,7 @@ async fn contacts(
     _: Contacts,
     Query(query): Query<GetContactsParams>,
     State(state): State<AppState>,
+    headers: HeaderMap,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {
     let page_number = query.page.unwrap_or(0);
@@ -365,57 +372,96 @@ async fn contacts(
         }
     };
     let contacts_len = contacts.len();
+    let rows = html! {
+        @for contact in contacts {
+            tr {
+                td {
+                    input type="checkbox" name="selected_contact_ids" value=(contact.id) {}
+                }
+                td { (contact.first_name)}
+                td { (contact.last_name)}
+                td { (contact.phone)}
+                td { (contact.email_address)}
+                td {
+                    a href=(UpdateContact { id: contact.id}.to_string()) { "Edit" }
+                    " "
+                    a href=(ViewContact { id: contact.id}.to_string()) { "View" }
+                    " "
+                    a href="#" hx-delete=(ViewContact {id: contact.id}.to_string())
+                        hx-swap="outerHTML swap:1s"
+                        hx-confirm="Are you sure you want to delete this contact?"
+                        hx-target="closest tr" { "Delete" }
+                }
+            }
+        }
+    };
+    if headers.get("HX-Trigger").is_some_and(|val| val == "search") {
+        return rows.into_response();
+    }
+    // todo: investigate adding new tbody when reach end of hte list
     page(
         html! {
-            form action=(Contacts.to_string()) method="get" {
+            form .tool-bar action=(Contacts.to_string()) method="get" {
                 label for="search" { "Search Term" }
-                input id="search" type="search" name="q" value=(query.query.as_deref().unwrap_or_default());
+                input id="search" type="search" name="q" value=(query.query.as_deref().unwrap_or_default())
+                    hx-get=(Contacts.to_string())
+                    hx-trigger="change, keyup delay:200ms changed"
+                    hx-target="tbody"
+                    hx-push-url="true"
+                    hx-indicator="#spinner";
+                img #spinner .htmx-indicator src="/dist/img/spinning-circles.svg" alt="Request In Flight";
                 input type="submit" value="Search";
             }
-            table {
-                thead {
-                    tr {
-                        th {"First"} th {"Last"} th {"Phone"} th {"Email"}
-                    }
-                }
-                tbody {
-                    @for contact in contacts {
+            form {
+                table {
+                    thead {
                         tr {
-                            td { (contact.first_name)}
-                            td { (contact.last_name)}
-                            td { (contact.phone)}
-                            td { (contact.email_address)}
-                            td {
-                                a href=(UpdateContact { id: contact.id}.to_string()) { "Edit" }
-                                " "
-                                a href=(ViewContact { id: contact.id}.to_string()) { "View" }
+                            th {} th {"First"} th {"Last"} th {"Phone"} th {"Email"}
+                        }
+                    }
+                    tbody {
+                        (rows)
+                        @if contacts_len >= 10 {
+                            tr {
+                                td colspan="5" style="text-align: center" {
+                                    span hx-target="closest tr"
+                                        hx-trigger="revealed"
+                                        hx-swap="outerHTML"
+                                        hx-select="tbody > tr"
+                                        hx-get=(Contacts.with_query_params(Pagination{page: page_number + 1})) { "Loading More..." }
+                                }
                             }
                         }
                     }
                 }
-                @if contacts_len >= 10 {
-                    tr {
-                        td colspan="5" style="text-align: center" {
-                            span hx-target="closest tr"
-                                hx-trigger="revealed"
-                                hx-swap="outerHTML"
-                                hx-select="tbody > tr"
-                                hx-get=(Contacts.with_query_params(Pagination{page: page_number + 1})) { "Loading More..." }
-                        }
-                    }
-                }
+                button hx-delete=(Contacts.to_string())
+                    hx-confirm="Are you sure you want to delete these contacts?"
+                    hx-target="body" { "Delete Selected Contacts" }
             }
             p {
                 a href=(AddContact.to_string()) { "Add Contact" }
+                " "
+                span hx-get=(ContactsCount.to_string()) hx-trigger="revealed" {
+                    img #spinner .htmx-indicator src="/dist/img/spinning-circles.svg";
+                }
             }
         },
         flashes,
-    )
+    ).into_response()
 }
 
 #[derive(Serialize)]
 struct Pagination {
     page: u32,
+}
+
+#[derive(Deserialize, TypedPath)]
+#[typed_path("/contacts/count")]
+struct ContactsCount;
+
+async fn contacts_count(_: ContactsCount, State(state): State<AppState>) -> impl IntoResponse {
+    let count = state.contacts.read().await.len();
+    format!("({count} total Contacts)")
 }
 
 #[derive(Deserialize, TypedPath)]
@@ -629,7 +675,7 @@ fn edit_contact_form<'a>(
                     button {"Save"}
                 }
             }
-            button hx-delete=(ViewContact{id})
+            button #delete-btn hx-delete=(ViewContact{id})
                 hx-target="body"
                 hx-push-url="true"
                 hx-confirm="Are you sure you want to delete this contact?" {"Delete Contact"}
@@ -645,6 +691,7 @@ async fn contacts_delete(
     ViewContact { id }: ViewContact,
     State(state): State<AppState>,
     flash: Flash,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     let mut contacts = state.contacts.write().await;
     let found_contact = contacts.iter().position(|contact| contact.id == id);
@@ -657,8 +704,60 @@ async fn contacts_delete(
     }
     contacts.swap_remove(found_contact.unwrap());
 
+    if headers
+        .get("HX-Trigger")
+        .is_some_and(|val| val == "delete-btn")
+    {
+        (
+            flash.success("Deleted contact!"),
+            Redirect::to(&Contacts.to_string()),
+        )
+            .into_response()
+    } else {
+        return "".into_response();
+    }
+}
+
+#[derive(Deserialize)]
+struct DeleteContactList {
+    #[serde(default)]
+    selected_contact_ids: Vec<ContactId>,
+}
+
+// This is already at the `Contacts` page,
+// so we don't have to redirect,
+// but unsure if this is what we want.
+// We might want to copy things over, but
+// what if we were searching or navigating through the pages?
+// Would we copy all of that logic over here?
+// The example in the book renders all contacts.
+async fn contacts_delete_all(
+    _: Contacts,
+    State(state): State<AppState>,
+    flash: Flash,
+    Form(to_delete): Form<DeleteContactList>,
+) -> impl IntoResponse {
+    let mut contacts = state.contacts.write().await;
+    let mut find_error = false;
+    to_delete.selected_contact_ids.into_iter().for_each(|id| {
+        let found_contact = contacts.iter().position(|contact| contact.id == id);
+        if found_contact.is_none() {
+            find_error = true;
+            return;
+        }
+        contacts.swap_remove(found_contact.unwrap());
+    });
+
+    if find_error {
+        return (
+            flash.error("Could not find one or more contacts!"),
+            Redirect::to(&Contacts.to_string()),
+        )
+            .into_response();
+    }
+
     (
-        flash.success("Deleted contact!"),
+        flash.success("Deleted contacts!"),
         Redirect::to(&Contacts.to_string()),
     )
         .into_response()
