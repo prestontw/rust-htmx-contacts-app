@@ -25,6 +25,8 @@ use uuid::Uuid;
 // TODO:
 // - use diesel
 // - style with tailwind
+//   - https://www.crocodile.dev/blog/css-transitions-with-tailwind-and-htmx
+//   - https://tailwindcss.com/docs/plugins#adding-variants
 
 #[derive(Clone)]
 struct AppState {
@@ -313,6 +315,7 @@ fn page(body: Markup, flashes: IncomingFlashes) -> (IncomingFlashes, Markup) {
             (DOCTYPE)
             head {
                 script src="https://unpkg.com/htmx.org@1.9.5" crossorigin="anonymous" {}
+                link rel="stylesheet" href="/dist/output.css";
                 meta charset="utf-8";
             }
             body .p-10.max-w-prose.m-auto hx-boost="true" {
@@ -381,8 +384,9 @@ async fn contacts(
                     a href=(ViewContact { id: contact.id}.to_string()) { "View" }
                     " "
                     a href="#" hx-delete=(ViewContact {id: contact.id}.to_string())
+                        hx-swap="outerHTML swap:1s"
                         hx-confirm="Are you sure you want to delete this contact?"
-                        hx-target="body" { "Delete" }
+                        hx-target="closest tr" { "Delete" }
                 }
             }
         }
@@ -662,7 +666,7 @@ fn edit_contact_form<'a>(
                     button {"Save"}
                 }
             }
-            button hx-delete=(ViewContact{id})
+            button #delete-btn hx-delete=(ViewContact{id})
                 hx-target="body"
                 hx-push-url="true"
                 hx-confirm="Are you sure you want to delete this contact?" {"Delete Contact"}
@@ -678,6 +682,7 @@ async fn contacts_delete(
     ViewContact { id }: ViewContact,
     State(state): State<AppState>,
     flash: Flash,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     let mut contacts = state.contacts.write().await;
     let found_contact = contacts.iter().position(|contact| contact.id == id);
@@ -690,11 +695,18 @@ async fn contacts_delete(
     }
     contacts.swap_remove(found_contact.unwrap());
 
-    (
-        flash.success("Deleted contact!"),
-        Redirect::to(&Contacts.to_string()),
-    )
-        .into_response()
+    if headers
+        .get("HX-Trigger")
+        .is_some_and(|val| val == "delete-btn")
+    {
+        (
+            flash.success("Deleted contact!"),
+            Redirect::to(&Contacts.to_string()),
+        )
+            .into_response()
+    } else {
+        return "".into_response();
+    }
 }
 
 #[derive(Deserialize, TypedPath)]
