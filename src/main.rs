@@ -7,8 +7,8 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::response::Redirect;
-use axum::Form;
 use axum::Router;
+use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
 use axum_extra::routing::TypedPath;
 use axum_flash::Flash;
@@ -129,6 +129,7 @@ async fn main() {
         .typed_post(contacts_new_post)
         .typed_post(contacts_edit_post)
         .typed_delete(contacts_delete)
+        .typed_delete(contacts_delete_all)
         .with_state(starting_state)
         .nest_service("/dist", ServeDir::new("dist"));
 
@@ -374,6 +375,9 @@ async fn contacts(
     let rows = html! {
         @for contact in contacts {
             tr {
+                td {
+                    input type="checkbox" name="selected_contact_ids" value=(contact.id) {}
+                }
                 td { (contact.first_name)}
                 td { (contact.last_name)}
                 td { (contact.phone)}
@@ -408,26 +412,31 @@ async fn contacts(
                 img #spinner .htmx-indicator src="/dist/img/spinning-circles.svg" alt="Request In Flight";
                 input type="submit" value="Search";
             }
-            table {
-                thead {
-                    tr {
-                        th {"First"} th {"Last"} th {"Phone"} th {"Email"}
-                    }
-                }
-                tbody {
-                    (rows)
-                    @if contacts_len >= 10 {
+            form {
+                table {
+                    thead {
                         tr {
-                            td colspan="5" style="text-align: center" {
-                                span hx-target="closest tr"
-                                    hx-trigger="revealed"
-                                    hx-swap="outerHTML"
-                                    hx-select="tbody > tr"
-                                    hx-get=(Contacts.with_query_params(Pagination{page: page_number + 1})) { "Loading More..." }
+                            th {} th {"First"} th {"Last"} th {"Phone"} th {"Email"}
+                        }
+                    }
+                    tbody {
+                        (rows)
+                        @if contacts_len >= 10 {
+                            tr {
+                                td colspan="5" style="text-align: center" {
+                                    span hx-target="closest tr"
+                                        hx-trigger="revealed"
+                                        hx-swap="outerHTML"
+                                        hx-select="tbody > tr"
+                                        hx-get=(Contacts.with_query_params(Pagination{page: page_number + 1})) { "Loading More..." }
+                                }
                             }
                         }
                     }
                 }
+                button hx-delete=(Contacts.to_string())
+                    hx-confirm="Are you sure you want to delete these contacts?"
+                    hx-target="body" { "Delete Selected Contacts" }
             }
             p {
                 a href=(AddContact.to_string()) { "Add Contact" }
@@ -707,6 +716,51 @@ async fn contacts_delete(
     } else {
         return "".into_response();
     }
+}
+
+#[derive(Deserialize)]
+struct DeleteContactList {
+    #[serde(default)]
+    selected_contact_ids: Vec<ContactId>,
+}
+
+// This is already at the `Contacts` page,
+// so we don't have to redirect,
+// but unsure if this is what we want.
+// We might want to copy things over, but
+// what if we were searching or navigating through the pages?
+// Would we copy all of that logic over here?
+// The example in the book renders all contacts.
+async fn contacts_delete_all(
+    _: Contacts,
+    State(state): State<AppState>,
+    flash: Flash,
+    Form(to_delete): Form<DeleteContactList>,
+) -> impl IntoResponse {
+    let mut contacts = state.contacts.write().await;
+    let mut find_error = false;
+    to_delete.selected_contact_ids.into_iter().for_each(|id| {
+        let found_contact = contacts.iter().position(|contact| contact.id == id);
+        if found_contact.is_none() {
+            find_error = true;
+            return;
+        }
+        contacts.swap_remove(found_contact.unwrap());
+    });
+
+    if find_error {
+        return (
+            flash.error("Could not find one or more contacts!"),
+            Redirect::to(&Contacts.to_string()),
+        )
+            .into_response();
+    }
+
+    (
+        flash.success("Deleted contacts!"),
+        Redirect::to(&Contacts.to_string()),
+    )
+        .into_response()
 }
 
 #[derive(Deserialize, TypedPath)]
