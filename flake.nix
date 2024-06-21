@@ -20,6 +20,7 @@
             cargo-watch
             rustup
             tailwindcss
+            nodePackages.typescript-language-server
           ] ++ lib.optionals stdenv.isDarwin [libiconv llvmPackages.bintools]
           ++ lib.optionals stdenv.isLinux [mold clang];
 

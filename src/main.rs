@@ -317,6 +317,7 @@ fn page(body: Markup, flashes: IncomingFlashes) -> (IncomingFlashes, Markup) {
             head {
                 script src="https://unpkg.com/htmx.org@1.9.5" crossorigin="anonymous" {}
                 link rel="stylesheet" href="/dist/output.css";
+                script src="/dist/rsjs.js" {}
                 meta charset="utf-8";
             }
             body .p-10.max-w-prose.m-auto hx-boost="true" {
@@ -383,14 +384,19 @@ async fn contacts(
                 td { (contact.phone)}
                 td { (contact.email_address)}
                 td {
-                    a href=(UpdateContact { id: contact.id}.to_string()) { "Edit" }
-                    " "
-                    a href=(ViewContact { id: contact.id}.to_string()) { "View" }
-                    " "
-                    a href="#" hx-delete=(ViewContact {id: contact.id}.to_string())
-                        hx-swap="outerHTML swap:1s"
-                        hx-confirm="Are you sure you want to delete this contact?"
-                        hx-target="closest tr" { "Delete" }
+                    div data-overflow-menu {
+                        button type="button" aria-haspopup="menu" aria-controls=(format!("contact-menu-{}", contact.id)) {"Options"}
+                        div role="menu" hidden id=(format!("contact-menu-{}", contact.id)) {
+                            a role="menuitem" href=(UpdateContact { id: contact.id}.to_string()) { "Edit" }
+                            " "
+                            a role="menuitem" href=(ViewContact { id: contact.id}.to_string()) { "View" }
+                            " "
+                            a role="menuitem" href="#" hx-delete=(ViewContact {id: contact.id}.to_string())
+                                hx-swap="outerHTML swap:1s"
+                                hx-confirm="Are you sure you want to delete this contact?"
+                                hx-target="closest tr" { "Delete" }
+                        }
+                    }
                 }
             }
         }
