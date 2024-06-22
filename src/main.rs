@@ -1,3 +1,5 @@
+#![feature(type_changing_struct_update)]
+
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::Arc;
@@ -118,6 +120,13 @@ async fn main() {
         ])),
         flash_config: axum_flash::Config::new(axum_flash::Key::generate()),
     };
+    let api_routes = Router::new()
+        .typed_get(api::get_contacts)
+        .typed_get(api::get_contact)
+        .typed_put(api::update_contact)
+        .typed_delete(api::delete_contact)
+        .typed_post(api::new_contact);
+
     let app = Router::new()
         .typed_get(root)
         .typed_get(contacts)
@@ -130,6 +139,7 @@ async fn main() {
         .typed_post(contacts_edit_post)
         .typed_delete(contacts_delete)
         .typed_delete(contacts_delete_all)
+        .nest("/api/v1", api_routes)
         .with_state(starting_state)
         .nest_service("/dist", ServeDir::new("dist"));
 
@@ -217,13 +227,19 @@ impl ContactId {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct Contact<ID: IdType<ContactId>> {
     id: ID,
     first_name: String,
     last_name: String,
     phone: String,
     email_address: String,
+}
+
+impl Contact<NoId> {
+    fn with_id(self, id: ContactId) -> Contact<ContactId> {
+        Contact { id, ..self }
+    }
 }
 
 /// Pending contact that is the information entered by the user. Could be
@@ -556,17 +572,14 @@ struct ViewContact {
 }
 
 async fn contacts_view(
-    contact_id: ViewContact,
+    ViewContact { id }: ViewContact,
     State(state): State<AppState>,
     flash: Flash,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {
     let contact = {
         let contacts = state.contacts.read().await;
-        contacts
-            .iter()
-            .find(|contact| contact.id == contact_id.id)
-            .cloned()
+        contacts.iter().find(|contact| contact.id == id).cloned()
     };
     if let Some(contact) = contact {
         page(
@@ -579,7 +592,7 @@ async fn contacts_view(
                     div { "Email: " (contact.email_address)}
                 }
                 p {
-                    a href=((UpdateContact {id: contact_id.id}).to_string()) { "Edit"}
+                    a href=((UpdateContact {id}).to_string()) { "Edit"}
                     " "
                     a href=(Contacts.to_string()) { "Back" }
                 }
@@ -809,4 +822,89 @@ async fn contacts_email_get(
         .and_then(|errors| errors.get("email").cloned())
         .unwrap_or_default()
         .into_response()
+}
+
+mod api {
+    use axum::extract::State;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use axum::Json;
+    use serde::Serialize;
+
+    use crate::AppState;
+    use crate::Contact;
+    use crate::ContactId;
+    use crate::Contacts;
+    use crate::NoId;
+    use crate::ViewContact;
+
+    pub async fn get_contacts(_: Contacts, State(state): State<AppState>) -> impl IntoResponse {
+        #[derive(Serialize)]
+        struct Contacts {
+            contacts: Vec<Contact<ContactId>>,
+        }
+
+        Json(Contacts {
+            contacts: state.contacts.read().await.clone(),
+        })
+    }
+
+    pub async fn get_contact(
+        ViewContact { id }: ViewContact,
+        State(state): State<AppState>,
+    ) -> impl IntoResponse {
+        let contact = state
+            .contacts
+            .read()
+            .await
+            .iter()
+            .find(|contact| contact.id == id)
+            .cloned();
+        match contact {
+            None => (StatusCode::NOT_FOUND, "Could not find contact").into_response(),
+            Some(contact) => Json(contact).into_response(),
+        }
+    }
+
+    pub async fn update_contact(
+        ViewContact { id }: ViewContact,
+        State(state): State<AppState>,
+        Json(contact): Json<Contact<ContactId>>,
+    ) -> impl IntoResponse {
+        let mut contacts = state.contacts.write().await;
+        let existing_contact = contacts.iter_mut().find(|contact| contact.id == id);
+        match existing_contact {
+            None => (StatusCode::NOT_FOUND, "Could not find contact").into_response(),
+            Some(existing_contact) => {
+                *existing_contact = contact;
+                existing_contact.id = id;
+                Json(existing_contact).into_response()
+            }
+        }
+    }
+
+    pub async fn delete_contact(
+        ViewContact { id }: ViewContact,
+        State(state): State<AppState>,
+    ) -> impl IntoResponse {
+        let mut contacts = state.contacts.write().await;
+        let index = contacts.iter().position(|contact| contact.id == id);
+        match index {
+            None => (StatusCode::NOT_FOUND, "Could not find contact").into_response(),
+            Some(index) => {
+                contacts.swap_remove(index);
+                (StatusCode::OK, "Successfully deleted").into_response()
+            }
+        }
+    }
+
+    pub async fn new_contact(
+        _: Contacts,
+        State(state): State<AppState>,
+        Json(new_contact): Json<Contact<NoId>>,
+    ) -> impl IntoResponse {
+        let new_contact = new_contact.with_id(ContactId::new());
+        state.contacts.write().await.push(new_contact.clone());
+        Json(new_contact)
+    }
 }
