@@ -317,6 +317,7 @@ fn page(body: Markup, flashes: IncomingFlashes) -> (IncomingFlashes, Markup) {
             head {
                 script src="https://unpkg.com/htmx.org@1.9.5" crossorigin="anonymous" {}
                 script defer src="https://unpkg.com/alpinejs" crossorigin="anonymous" {}
+                script src="//unpkg.com/hyperscript.org" crossorigin="anonymous" {}
                 link rel="stylesheet" href="/dist/output.css";
                 script src="/dist/rsjs.js" {}
                 meta charset="utf-8";
@@ -410,7 +411,8 @@ async fn contacts(
         html! {
             form .tool-bar action=(Contacts.to_string()) method="get" {
                 label for="search" { "Search Term" }
-                input id="search" type="search" name="q" value=(query.query.as_deref().unwrap_or_default())
+                input id="search" type="search" name="q" placeholder="Search Contacts"
+                _="on keydown[altKey and code is 'KeyS'] from the window me.focus()" value=(query.query.as_deref().unwrap_or_default())
                     hx-get=(Contacts.to_string())
                     hx-trigger="change, keyup delay:200ms changed"
                     hx-target="tbody"
