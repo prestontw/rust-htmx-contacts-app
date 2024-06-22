@@ -46,70 +46,70 @@ async fn main() {
                 id: ContactId::new(),
             },
             Contact {
-                first_name: "Joe".into(),
+                first_name: "Joe1".into(),
                 last_name: "Smith".into(),
                 email_address: "joe.smith@example.com".into(),
                 phone: "222-999-8899".into(),
                 id: ContactId::new(),
             },
             Contact {
-                first_name: "Joe".into(),
+                first_name: "Joe2".into(),
                 last_name: "Smith".into(),
                 email_address: "joe.smith@example.com".into(),
                 phone: "222-999-8899".into(),
                 id: ContactId::new(),
             },
             Contact {
-                first_name: "Joe".into(),
+                first_name: "Joe3".into(),
                 last_name: "Smith".into(),
                 email_address: "joe.smith@example.com".into(),
                 phone: "222-999-8899".into(),
                 id: ContactId::new(),
             },
             Contact {
-                first_name: "Joe".into(),
+                first_name: "Joe4".into(),
                 last_name: "Smith".into(),
                 email_address: "joe.smith@example.com".into(),
                 phone: "222-999-8899".into(),
                 id: ContactId::new(),
             },
             Contact {
-                first_name: "Joe".into(),
+                first_name: "Joe5".into(),
                 last_name: "Smith".into(),
                 email_address: "joe.smith@example.com".into(),
                 phone: "222-999-8899".into(),
                 id: ContactId::new(),
             },
             Contact {
-                first_name: "Joe".into(),
+                first_name: "Joe6".into(),
                 last_name: "Smith".into(),
                 email_address: "joe.smith@example.com".into(),
                 phone: "222-999-8899".into(),
                 id: ContactId::new(),
             },
             Contact {
-                first_name: "Joe".into(),
+                first_name: "Joe7".into(),
                 last_name: "Smith".into(),
                 email_address: "joe.smith@example.com".into(),
                 phone: "222-999-8899".into(),
                 id: ContactId::new(),
             },
             Contact {
-                first_name: "Joe".into(),
+                first_name: "Joe8".into(),
                 last_name: "Smith".into(),
                 email_address: "joe.smith@example.com".into(),
                 phone: "222-999-8899".into(),
                 id: ContactId::new(),
             },
             Contact {
-                first_name: "Joe".into(),
+                first_name: "Joe9".into(),
                 last_name: "Smith".into(),
                 email_address: "joe.smith@example.com".into(),
                 phone: "222-999-8899".into(),
                 id: ContactId::new(),
             },
             Contact {
-                first_name: "Joe".into(),
+                first_name: "Joe10".into(),
                 last_name: "Smith".into(),
                 email_address: "joe.smith@example.com".into(),
                 phone: "222-999-8899".into(),
@@ -316,7 +316,10 @@ fn page(body: Markup, flashes: IncomingFlashes) -> (IncomingFlashes, Markup) {
             (DOCTYPE)
             head {
                 script src="https://unpkg.com/htmx.org@1.9.5" crossorigin="anonymous" {}
+                script defer src="https://unpkg.com/alpinejs" crossorigin="anonymous" {}
+                script src="//unpkg.com/hyperscript.org" crossorigin="anonymous" {}
                 link rel="stylesheet" href="/dist/output.css";
+                script src="/dist/rsjs.js" {}
                 meta charset="utf-8";
             }
             body .p-10.max-w-prose.m-auto hx-boost="true" {
@@ -376,21 +379,26 @@ async fn contacts(
         @for contact in contacts {
             tr {
                 td {
-                    input type="checkbox" name="selected_contact_ids" value=(contact.id) {}
+                    input type="checkbox" name="selected_contact_ids" value=(contact.id) x-model="selected" {}
                 }
                 td { (contact.first_name)}
                 td { (contact.last_name)}
                 td { (contact.phone)}
                 td { (contact.email_address)}
                 td {
-                    a href=(UpdateContact { id: contact.id}.to_string()) { "Edit" }
-                    " "
-                    a href=(ViewContact { id: contact.id}.to_string()) { "View" }
-                    " "
-                    a href="#" hx-delete=(ViewContact {id: contact.id}.to_string())
-                        hx-swap="outerHTML swap:1s"
-                        hx-confirm="Are you sure you want to delete this contact?"
-                        hx-target="closest tr" { "Delete" }
+                    div data-overflow-menu {
+                        button type="button" aria-haspopup="menu" aria-controls=(format!("contact-menu-{}", contact.id)) {"Options"}
+                        div role="menu" hidden id=(format!("contact-menu-{}", contact.id)) {
+                            a role="menuitem" href=(UpdateContact { id: contact.id}.to_string()) { "Edit" }
+                            " "
+                            a role="menuitem" href=(ViewContact { id: contact.id}.to_string()) { "View" }
+                            " "
+                            a role="menuitem" href="#" hx-delete=(ViewContact {id: contact.id}.to_string())
+                                hx-swap="outerHTML swap:1s"
+                                hx-confirm="Are you sure you want to delete this contact?"
+                                hx-target="closest tr" { "Delete" }
+                        }
+                    }
                 }
             }
         }
@@ -403,7 +411,8 @@ async fn contacts(
         html! {
             form .tool-bar action=(Contacts.to_string()) method="get" {
                 label for="search" { "Search Term" }
-                input id="search" type="search" name="q" value=(query.query.as_deref().unwrap_or_default())
+                input id="search" type="search" name="q" placeholder="Search Contacts"
+                _="on keydown[altKey and code is 'KeyS'] from the window me.focus()" value=(query.query.as_deref().unwrap_or_default())
                     hx-get=(Contacts.to_string())
                     hx-trigger="change, keyup delay:200ms changed"
                     hx-target="tbody"
@@ -412,7 +421,16 @@ async fn contacts(
                 img #spinner .htmx-indicator src="/dist/img/spinning-circles.svg" alt="Request In Flight";
                 input type="submit" value="Search";
             }
-            form {
+            form x-data="{ selected: [] }" {
+                template x-if="selected.length > 0" {
+                    div .box.info.tool-bar {
+                        slot x-text="selected.length" {} " contacts selected "
+                        button type="button" .bad.bg.color.border
+                            x-on:click=(format!("confirm(`Delete ${{selected.length}} contacts?`) && htmx.ajax('DELETE', '{}', {{ source: $root, target: document.body }})", Contacts)) { "Delete" }
+                        hr aria-orientation="vertical";
+                        button type="button" x-on:click="selected = []" { "Cancel" }
+                    }
+                }
                 table {
                     thead {
                         tr {
@@ -434,9 +452,6 @@ async fn contacts(
                         }
                     }
                 }
-                button hx-delete=(Contacts.to_string())
-                    hx-confirm="Are you sure you want to delete these contacts?"
-                    hx-target="body" { "Delete Selected Contacts" }
             }
             p {
                 a href=(AddContact.to_string()) { "Add Contact" }
