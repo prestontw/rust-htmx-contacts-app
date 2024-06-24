@@ -373,11 +373,11 @@ async fn contacts(
                     div data-overflow-menu {
                         button type="button" aria-haspopup="menu" aria-controls=(format!("contact-menu-{}", contact.id)) {"Options"}
                         div role="menu" hidden id=(format!("contact-menu-{}", contact.id)) {
-                            a role="menuitem" href="" { "Edit" }
+                            a role="menuitem" href=(UpdateContact {id: contact.id}.to_string()) { "Edit" }
                             " "
-                            a role="menuitem" href="" { "View" }
+                            a role="menuitem" href=(ViewContact {id: contact.id}.to_string()) { "View" }
                             " "
-                            a role="menuitem" href="#" hx-delete="Hello"
+                            a role="menuitem" href="#" hx-delete=(ViewContact {id: contact.id}.to_string())
                                 hx-swap="outerHTML swap:1s"
                                 hx-confirm="Are you sure you want to delete this contact?"
                                 hx-target="closest tr" { "Delete" }
@@ -438,7 +438,7 @@ async fn contacts(
                 }
             }
             p {
-                a href="Add Contact" { "Add Contact" }
+                a href=(AddContact.to_string()) { "Add Contact" }
                 " "
                 span hx-get=(ContactsCount.to_string()) hx-trigger="revealed" {
                     img #spinner .htmx-indicator src="/dist/img/spinning-circles.svg";
