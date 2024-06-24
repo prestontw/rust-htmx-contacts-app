@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::env;
 use std::fmt::Display;
-use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::Query;
@@ -21,12 +20,9 @@ use axum_flash::IncomingFlashes;
 use deadpool_diesel::postgres::Manager;
 use deadpool_diesel::postgres::Pool;
 use deadpool_diesel::Runtime;
-use diesel::expression::AsExpression;
-use diesel::pg::Pg;
 use diesel::prelude::*;
 use diesel::query_builder::AsChangeset;
 use diesel::sql_types::Integer;
-use diesel::IntoSql;
 use diesel::Queryable;
 use diesel::RunQueryDsl;
 use diesel::Selectable;
@@ -38,9 +34,7 @@ use maud::Markup;
 use maud::DOCTYPE;
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
-use uuid::Uuid;
 
 // TODO:
 // - use diesel
@@ -191,34 +185,17 @@ impl Display for NoId {
 #[serde(transparent)]
 struct ContactId(i32);
 
-impl IdType<ContactId> for ContactId {
-    type Id = i32;
-
-    fn id(self) -> Self::Id {
-        self.0
-    }
-}
-
 impl Display for ContactId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
     }
 }
 
-impl ContactId {
-    fn new() -> Self {
-        ContactId(0)
-    }
-}
-
 #[derive(AsChangeset, Queryable, Selectable, Clone, Debug, Deserialize, Serialize, Insertable)]
 #[diesel(table_name = hypermedia_systems_rust::schema::contacts)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
-struct Contact<ID>
-where
-    ID: IdType<ContactId> + Insertable<Pg>,
-{
-    id: ID,
+struct Contact {
+    id: ContactId,
     first_name: String,
     last_name: String,
     phone: String,
@@ -229,10 +206,7 @@ where
 /// missing fields or have invalid fields (eg, bogus email address format).
 /// Could experiment with just using a HashMap for the next endpoint.
 #[derive(Deserialize, Default, Debug)]
-struct PendingContact<ID>
-where
-    ID: IdType<ContactId>,
-{
+struct PendingContact {
     #[serde(deserialize_with = "non_empty_str")]
     first_name: Option<String>,
     #[serde(deserialize_with = "non_empty_str")]
@@ -241,7 +215,6 @@ where
     phone: Option<String>,
     #[serde(deserialize_with = "non_empty_str")]
     email_address: Option<String>,
-    id: ID,
 }
 
 fn non_empty_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
@@ -250,23 +223,19 @@ fn non_empty_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String
     Ok(o.filter(|s| !s.is_empty()))
 }
 
-impl From<Contact<ContactId>> for PendingContact<ContactId> {
-    fn from(value: Contact<ContactId>) -> Self {
+impl From<Contact> for PendingContact {
+    fn from(value: Contact) -> Self {
         Self {
             first_name: Some(value.first_name),
             last_name: Some(value.last_name),
             phone: Some(value.phone),
             email_address: Some(value.email_address),
-            id: value.id,
         }
     }
 }
 
-impl<ID> PendingContact<ID>
-where
-    ID: IdType<ContactId> + Insertable<Pg>,
-{
-    fn to_valid(&self) -> Result<Contact<ID>, HashMap<&'static str, String>> {
+impl PendingContact {
+    fn to_valid(&self) -> Result<Contact, HashMap<&'static str, String>> {
         match (
             &self.first_name,
             &self.last_name,
@@ -275,7 +244,7 @@ where
         ) {
             (Some(first_name), Some(last_name), Some(phone), Some(email)) if !email.is_empty() => {
                 Ok(Contact {
-                    id: self.id,
+                    id: ContactId::default(),
                     first_name: first_name.to_owned(),
                     last_name: last_name.to_owned(),
                     phone: phone.to_owned(),
@@ -510,7 +479,7 @@ async fn contacts_count(_: ContactsCount, State(state): State<AppState>) -> Resu
 struct AddContact;
 
 async fn contacts_new_get(_: AddContact, flashes: IncomingFlashes) -> impl IntoResponse {
-    new_contact_form(PendingContact::<NoId>::default(), HashMap::new(), flashes)
+    new_contact_form(PendingContact::default(), HashMap::new(), flashes)
 }
 
 async fn contacts_new_post(
@@ -518,7 +487,7 @@ async fn contacts_new_post(
     State(state): State<AppState>,
     flashes: IncomingFlashes,
     flash: Flash,
-    Form(pending_contact): Form<PendingContact<NoId>>,
+    Form(pending_contact): Form<PendingContact>,
 ) -> Result<Response<Body>, Error> {
     let contact = pending_contact.to_valid();
     if let Err(errors) = contact {
@@ -545,7 +514,7 @@ async fn contacts_new_post(
 }
 
 fn new_contact_form<'a>(
-    contact: PendingContact<NoId>,
+    contact: PendingContact,
     errors: HashMap<&str, String>,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {
@@ -591,17 +560,18 @@ struct ViewContact {
     id: ContactId,
 }
 
-async fn find_contact(pool: Pool, contact_id: ContactId) -> Result<Contact<ContactId>, Error> {
+async fn find_contact(pool: Pool, contact_id: ContactId) -> Result<Contact, Error> {
     let connection = pool.get().await.map_err(Error::PoolError)?;
     let contact = connection
-        .interact(|connection| {
+        .interact(move |connection| {
             use hypermedia_systems_rust::schema::contacts::dsl::*;
 
-            let contact: Contact<ContactId> = contacts
-                .find(id)
+            let contact: Contact = contacts
+                .find(contact_id)
                 .select(Contact::as_select())
-                .first(connection)?;
-            Ok(contact)
+                .first(connection)
+                .map_err(Error::DieselError)?;
+            Ok::<Contact, Error>(contact)
         })
         .await
         .map_err(Error::DeadpoolError)??
@@ -664,7 +634,7 @@ async fn contacts_edit_get(
         )
             .into_response();
     }
-    edit_contact_form(contact.unwrap().into(), HashMap::new(), flashes).into_response()
+    edit_contact_form(id, contact.unwrap().into(), HashMap::new(), flashes).into_response()
 }
 
 async fn contacts_edit_post(
@@ -672,18 +642,19 @@ async fn contacts_edit_post(
     State(state): State<AppState>,
     flashes: IncomingFlashes,
     flash: Flash,
-    Form(pending_contact): Form<PendingContact<ContactId>>,
+    Form(pending_contact): Form<PendingContact>,
 ) -> Result<Response<Body>, Error> {
     let contact = pending_contact.to_valid();
     if let Err(errors) = contact {
-        return Ok(edit_contact_form(pending_contact, errors, flashes).into_response());
+        return Ok(edit_contact_form(id, pending_contact, errors, flashes).into_response());
     } else if let Ok(contact) = contact {
         let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
         connection
             .interact(|connection| {
                 use hypermedia_systems_rust::schema::contacts::dsl::*;
 
-                diesel::update(contacts.find(contact.id))
+                let contact_id = id;
+                diesel::update(contacts.find(contact_id))
                     .set(contact)
                     .execute(connection)
             })
@@ -698,19 +669,20 @@ async fn contacts_edit_post(
 }
 
 fn edit_contact_form<'a>(
-    contact: PendingContact<ContactId>,
+    id: ContactId,
+    contact: PendingContact,
     errors: HashMap<&str, String>,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {
     page(
         html! {
-            form action=(UpdateContact{id: contact.id}.to_string()) method="post" {
+            form action=(UpdateContact{id}.to_string()) method="post" {
                 fieldset {
                     legend { "Contact Values" }
                     p {
                         label for="email" {"Email"}
                         input name="email_address" id="email" type="email"
-                        hx-get=(ContactEmail{id: contact.id}.to_string())
+                        hx-get=(ContactEmail{id}.to_string())
                         hx-target="next .error"
                         hx-trigger="change, keyup delay:200ms changed"
                         placeholder="Email" value=(contact.email_address.unwrap_or_default());
@@ -734,7 +706,7 @@ fn edit_contact_form<'a>(
                     button {"Save"}
                 }
             }
-            button #delete-btn hx-delete=(ViewContact{id: contact.id})
+            button #delete-btn hx-delete=(ViewContact{id})
                 hx-target="body"
                 hx-push-url="true"
                 hx-confirm="Are you sure you want to delete this contact?" {"Delete Contact"}
@@ -754,10 +726,10 @@ async fn contacts_delete(
 ) -> Result<Response<Body>, Error> {
     let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
     connection
-        .interact(|connection| {
+        .interact(move |connection| {
             use hypermedia_systems_rust::schema::contacts::dsl::*;
 
-            diesel::delete(contacts.find(contact_id.clone()))
+            diesel::delete(contacts.find(contact_id))
                 .execute(connection)
                 .map_err(Error::DieselError)?;
             Ok::<(), Error>(())
@@ -803,8 +775,9 @@ async fn contacts_delete_all(
             use hypermedia_systems_rust::schema::contacts::dsl::*;
 
             diesel::delete(contacts.filter(id.eq_any(to_delete.selected_contact_ids)))
-                .execute(connection)?;
-            Ok(())
+                .execute(connection)
+                .map_err(Error::DieselError)?;
+            Ok::<(), Error>(())
         })
         .await
         .map_err(Error::DeadpoolError)??;
@@ -828,7 +801,7 @@ struct EmailValidationParams {
 }
 
 async fn contacts_email_get(
-    ContactEmail { id }: ContactEmail,
+    _: ContactEmail,
     Query(query): Query<EmailValidationParams>,
     State(state): State<AppState>,
 ) -> Result<Response<Body>, Error> {
@@ -867,15 +840,12 @@ mod api {
     use diesel::QueryDsl;
     use diesel::RunQueryDsl;
     use diesel::SelectableHelper;
-    use hypermedia_systems_rust::schema::contacts;
     use serde::Serialize;
 
     use crate::AppState;
     use crate::Contact;
-    use crate::ContactId;
     use crate::Contacts;
     use crate::Error;
-    use crate::NoId;
     use crate::ViewContact;
 
     pub async fn get_contacts(
@@ -884,11 +854,11 @@ mod api {
     ) -> Result<Response<Body>, Error> {
         #[derive(Serialize)]
         struct Contacts {
-            contacts: Vec<Contact<ContactId>>,
+            contacts: Vec<Contact>,
         }
 
         let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
-        let contacts: Vec<Contact<ContactId>> = connection
+        let contacts: Vec<Contact> = connection
             .interact(|connection| {
                 use hypermedia_systems_rust::schema::contacts::dsl::*;
 
@@ -903,15 +873,15 @@ mod api {
     }
 
     pub async fn get_contact(
-        ViewContact { id }: ViewContact,
+        ViewContact { id: contact_id }: ViewContact,
         State(state): State<AppState>,
     ) -> Result<Response<Body>, Error> {
         let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
-        let contact: Option<Contact<ContactId>> = connection
-            .interact(|connection| {
+        let contact: Option<Contact> = connection
+            .interact(move |connection| {
                 use hypermedia_systems_rust::schema::contacts::dsl::*;
 
-                contacts.find(id).first(connection).optional()
+                contacts.find(contact_id).first(connection).optional()
             })
             .await
             .map_err(Error::DeadpoolError)??;
@@ -922,16 +892,16 @@ mod api {
     }
 
     pub async fn update_contact(
-        ViewContact { id }: ViewContact,
+        ViewContact { id: contact_id }: ViewContact,
         State(state): State<AppState>,
-        Json(contact): Json<Contact<ContactId>>,
+        Json(contact): Json<Contact>,
     ) -> Result<Response<Body>, Error> {
         let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
         let contact = connection
-            .interact(|connection| {
+            .interact(move |connection| {
                 use hypermedia_systems_rust::schema::contacts::dsl::*;
 
-                diesel::update(contacts.find(contact.id))
+                diesel::update(contacts.find(contact_id))
                     .set(contact)
                     .returning(Contact::as_returning())
                     .get_result(connection)
@@ -947,13 +917,13 @@ mod api {
     ) -> Result<Response<Body>, Error> {
         let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
         connection
-            .interact(|connection| {
+            .interact(move |connection| {
                 use hypermedia_systems_rust::schema::contacts::dsl::*;
 
                 diesel::delete(contacts.find(contact_id))
                     .execute(connection)
                     .map_err(Error::DieselError)?;
-                Ok(())
+                Ok::<(), Error>(())
             })
             .await
             .map_err(Error::DeadpoolError)??;
@@ -963,8 +933,8 @@ mod api {
     pub async fn new_contact(
         _: Contacts,
         State(state): State<AppState>,
-        Json(new_contact): Json<Contact<NoId>>,
-    ) -> Result<Json<Contact<ContactId>>, Error> {
+        Json(new_contact): Json<Contact>,
+    ) -> Result<Json<Contact>, Error> {
         let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
         let new_contact = connection
             .interact(|connection| {
