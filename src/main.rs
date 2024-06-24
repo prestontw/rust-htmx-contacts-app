@@ -1,20 +1,38 @@
 #![feature(type_changing_struct_update)]
 
 use std::collections::HashMap;
+use std::env;
 use std::fmt::Display;
 use std::sync::Arc;
 
+use axum::body::Body;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::response::Redirect;
+use axum::response::Response;
 use axum::Router;
 use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
 use axum_extra::routing::TypedPath;
 use axum_flash::Flash;
 use axum_flash::IncomingFlashes;
+use deadpool_diesel::postgres::Manager;
+use deadpool_diesel::postgres::Pool;
+use deadpool_diesel::Runtime;
+use diesel::expression::AsExpression;
+use diesel::pg::Pg;
+use diesel::prelude::*;
+use diesel::query_builder::AsChangeset;
+use diesel::sql_types::Integer;
+use diesel::IntoSql;
+use diesel::Queryable;
+use diesel::RunQueryDsl;
+use diesel::Selectable;
+use diesel::SelectableHelper;
+use diesel_derive_newtype::DieselNewType;
+use dotenvy::dotenv;
 use maud::html;
 use maud::Markup;
 use maud::DOCTYPE;
@@ -32,92 +50,25 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 struct AppState {
-    contacts: Arc<RwLock<Vec<Contact<ContactId>>>>,
+    db_pool: Pool,
     flash_config: axum_flash::Config,
+}
+
+fn establish_connection() -> Pool {
+    dotenv().ok();
+    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let manager = Manager::new(&database_url, Runtime::Tokio1);
+    Pool::builder(manager)
+        .max_size(8)
+        .build()
+        .unwrap_or_else(|_| panic!("Error connecting to {}", database_url))
 }
 
 #[tokio::main]
 async fn main() {
+    let pool = establish_connection();
     let starting_state = AppState {
-        contacts: Arc::new(RwLock::new(vec![
-            Contact {
-                first_name: "Hello".into(),
-                last_name: "World".into(),
-                email_address: "".into(),
-                phone: "".into(),
-                id: ContactId::new(),
-            },
-            Contact {
-                first_name: "Joe1".into(),
-                last_name: "Smith".into(),
-                email_address: "joe.smith@example.com".into(),
-                phone: "222-999-8899".into(),
-                id: ContactId::new(),
-            },
-            Contact {
-                first_name: "Joe2".into(),
-                last_name: "Smith".into(),
-                email_address: "joe.smith@example.com".into(),
-                phone: "222-999-8899".into(),
-                id: ContactId::new(),
-            },
-            Contact {
-                first_name: "Joe3".into(),
-                last_name: "Smith".into(),
-                email_address: "joe.smith@example.com".into(),
-                phone: "222-999-8899".into(),
-                id: ContactId::new(),
-            },
-            Contact {
-                first_name: "Joe4".into(),
-                last_name: "Smith".into(),
-                email_address: "joe.smith@example.com".into(),
-                phone: "222-999-8899".into(),
-                id: ContactId::new(),
-            },
-            Contact {
-                first_name: "Joe5".into(),
-                last_name: "Smith".into(),
-                email_address: "joe.smith@example.com".into(),
-                phone: "222-999-8899".into(),
-                id: ContactId::new(),
-            },
-            Contact {
-                first_name: "Joe6".into(),
-                last_name: "Smith".into(),
-                email_address: "joe.smith@example.com".into(),
-                phone: "222-999-8899".into(),
-                id: ContactId::new(),
-            },
-            Contact {
-                first_name: "Joe7".into(),
-                last_name: "Smith".into(),
-                email_address: "joe.smith@example.com".into(),
-                phone: "222-999-8899".into(),
-                id: ContactId::new(),
-            },
-            Contact {
-                first_name: "Joe8".into(),
-                last_name: "Smith".into(),
-                email_address: "joe.smith@example.com".into(),
-                phone: "222-999-8899".into(),
-                id: ContactId::new(),
-            },
-            Contact {
-                first_name: "Joe9".into(),
-                last_name: "Smith".into(),
-                email_address: "joe.smith@example.com".into(),
-                phone: "222-999-8899".into(),
-                id: ContactId::new(),
-            },
-            Contact {
-                first_name: "Joe10".into(),
-                last_name: "Smith".into(),
-                email_address: "joe.smith@example.com".into(),
-                phone: "222-999-8899".into(),
-                id: ContactId::new(),
-            },
-        ])),
+        db_pool: pool,
         flash_config: axum_flash::Config::new(axum_flash::Key::generate()),
     };
     let api_routes = Router::new()
@@ -167,6 +118,26 @@ impl axum::extract::FromRef<AppState> for axum_flash::Config {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    #[error("Pool error: {0}")]
+    PoolError(#[from] deadpool_diesel::postgres::PoolError),
+    #[error("PostgreSQL error: {0}")]
+    DieselError(#[from] diesel::result::Error),
+    #[error("Deadpool error: {0}")]
+    DeadpoolError(#[from] deadpool_diesel::InteractError),
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> axum::response::Response {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "An internal error occurred. Please try again later.",
+        )
+            .into_response()
+    }
+}
+
 pub trait IdType<T>: Copy + std::fmt::Display {
     type Id;
 
@@ -174,7 +145,7 @@ pub trait IdType<T>: Copy + std::fmt::Display {
     fn id(self) -> Self::Id;
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct NoId;
 
 impl<T> IdType<T> for NoId {
@@ -182,6 +153,19 @@ impl<T> IdType<T> for NoId {
 
     fn id(self) -> Self::Id {
         unreachable!("Cannot access non-ID")
+    }
+}
+
+impl<DB> diesel::serialize::ToSql<Integer, DB> for NoId
+where
+    DB: diesel::backend::Backend,
+    i32: diesel::serialize::ToSql<Integer, DB>,
+{
+    fn to_sql<'b>(
+        &'b self,
+        out: &mut diesel::serialize::Output<'b, '_, DB>,
+    ) -> diesel::serialize::Result {
+        0.to_sql(out)
     }
 }
 
@@ -203,12 +187,12 @@ impl Display for NoId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(DieselNewType, Clone, Copy, Debug, Deserialize, Default, Serialize, PartialEq, Eq)]
 #[serde(transparent)]
-struct ContactId(uuid::Uuid);
+struct ContactId(i32);
 
 impl IdType<ContactId> for ContactId {
-    type Id = Uuid;
+    type Id = i32;
 
     fn id(self) -> Self::Id {
         self.0
@@ -223,12 +207,17 @@ impl Display for ContactId {
 
 impl ContactId {
     fn new() -> Self {
-        ContactId(uuid::Uuid::new_v4())
+        ContactId(0)
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct Contact<ID: IdType<ContactId>> {
+#[derive(AsChangeset, Queryable, Selectable, Clone, Debug, Deserialize, Serialize, Insertable)]
+#[diesel(table_name = hypermedia_systems_rust::schema::contacts)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+struct Contact<ID>
+where
+    ID: IdType<ContactId> + Insertable<Pg>,
+{
     id: ID,
     first_name: String,
     last_name: String,
@@ -236,17 +225,14 @@ struct Contact<ID: IdType<ContactId>> {
     email_address: String,
 }
 
-impl Contact<NoId> {
-    fn with_id(self, id: ContactId) -> Contact<ContactId> {
-        Contact { id, ..self }
-    }
-}
-
 /// Pending contact that is the information entered by the user. Could be
 /// missing fields or have invalid fields (eg, bogus email address format).
 /// Could experiment with just using a HashMap for the next endpoint.
 #[derive(Deserialize, Default, Debug)]
-struct PendingContact {
+struct PendingContact<ID>
+where
+    ID: IdType<ContactId>,
+{
     #[serde(deserialize_with = "non_empty_str")]
     first_name: Option<String>,
     #[serde(deserialize_with = "non_empty_str")]
@@ -255,6 +241,7 @@ struct PendingContact {
     phone: Option<String>,
     #[serde(deserialize_with = "non_empty_str")]
     email_address: Option<String>,
+    id: ID,
 }
 
 fn non_empty_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
@@ -263,22 +250,23 @@ fn non_empty_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String
     Ok(o.filter(|s| !s.is_empty()))
 }
 
-impl From<Contact<ContactId>> for PendingContact {
+impl From<Contact<ContactId>> for PendingContact<ContactId> {
     fn from(value: Contact<ContactId>) -> Self {
         Self {
             first_name: Some(value.first_name),
             last_name: Some(value.last_name),
             phone: Some(value.phone),
             email_address: Some(value.email_address),
+            id: value.id,
         }
     }
 }
 
-impl PendingContact {
-    fn to_valid(
-        &self,
-        id: Option<ContactId>,
-    ) -> Result<Contact<ContactId>, HashMap<&'static str, String>> {
+impl<ID> PendingContact<ID>
+where
+    ID: IdType<ContactId> + Insertable<Pg>,
+{
+    fn to_valid(&self) -> Result<Contact<ID>, HashMap<&'static str, String>> {
         match (
             &self.first_name,
             &self.last_name,
@@ -287,7 +275,7 @@ impl PendingContact {
         ) {
             (Some(first_name), Some(last_name), Some(phone), Some(email)) if !email.is_empty() => {
                 Ok(Contact {
-                    id: id.unwrap_or_else(ContactId::new),
+                    id: self.id,
                     first_name: first_name.to_owned(),
                     last_name: last_name.to_owned(),
                     phone: phone.to_owned(),
@@ -362,33 +350,44 @@ struct Contacts;
 
 async fn contacts(
     _: Contacts,
-    Query(query): Query<GetContactsParams>,
+    Query(GetContactsParams {
+        query,
+        page: page_number,
+    }): Query<GetContactsParams>,
     State(state): State<AppState>,
     headers: HeaderMap,
     flashes: IncomingFlashes,
-) -> impl IntoResponse {
-    let page_number = query.page.unwrap_or(0);
+) -> Result<Response<Body>, Error> {
+    let page_number = page_number.unwrap_or(0);
     let contacts = {
-        let contacts = state.contacts.read().await;
-        if let Some(q) = &query.query {
-            contacts
-                .iter()
-                .filter(|contact| {
-                    contact.first_name.contains(q)
-                        || contact.last_name.contains(q)
-                        || contact.email_address.contains(q)
-                        || contact.phone.contains(q)
-                })
-                .cloned()
-                .collect::<Vec<Contact<_>>>()
-        } else {
-            contacts
-                .chunks(10)
-                .skip(page_number as usize)
-                .next()
-                .unwrap_or_default()
-                .to_vec()
-        }
+        use hypermedia_systems_rust::schema::contacts::dsl::*;
+
+        let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
+        let search_string = query.clone();
+        connection
+            .interact(move |connection| {
+                if let Some(q) = search_string.clone() {
+                    contacts
+                        .filter(
+                            first_name
+                                .ilike(format!("{}%", q))
+                                .or(last_name.ilike(format!("{}%", q))),
+                        )
+                        .select(Contact::as_select())
+                        .load(connection)
+                        .map_err(Error::DieselError)
+                } else {
+                    contacts
+                        .order(id)
+                        .limit(10)
+                        .offset(page_number.into())
+                        .select(Contact::as_select())
+                        .load(connection)
+                        .map_err(Error::DieselError)
+                }
+            })
+            .await
+            .map_err(Error::DeadpoolError)??
     };
     let contacts_len = contacts.len();
     let rows = html! {
@@ -405,11 +404,11 @@ async fn contacts(
                     div data-overflow-menu {
                         button type="button" aria-haspopup="menu" aria-controls=(format!("contact-menu-{}", contact.id)) {"Options"}
                         div role="menu" hidden id=(format!("contact-menu-{}", contact.id)) {
-                            a role="menuitem" href=(UpdateContact { id: contact.id}.to_string()) { "Edit" }
+                            a role="menuitem" href="" { "Edit" }
                             " "
-                            a role="menuitem" href=(ViewContact { id: contact.id}.to_string()) { "View" }
+                            a role="menuitem" href="" { "View" }
                             " "
-                            a role="menuitem" href="#" hx-delete=(ViewContact {id: contact.id}.to_string())
+                            a role="menuitem" href="#" hx-delete="Hello"
                                 hx-swap="outerHTML swap:1s"
                                 hx-confirm="Are you sure you want to delete this contact?"
                                 hx-target="closest tr" { "Delete" }
@@ -420,15 +419,15 @@ async fn contacts(
         }
     };
     if headers.get("HX-Trigger").is_some_and(|val| val == "search") {
-        return rows.into_response();
+        return Ok(rows.into_response());
     }
     // todo: investigate adding new tbody when reach end of hte list
-    page(
+    Ok(page(
         html! {
             form .tool-bar action=(Contacts.to_string()) method="get" {
                 label for="search" { "Search Term" }
                 input id="search" type="search" name="q" placeholder="Search Contacts"
-                _="on keydown[altKey and code is 'KeyS'] from the window me.focus()" value=(query.query.as_deref().unwrap_or_default())
+                _="on keydown[altKey and code is 'KeyS'] from the window me.focus()" value=(query.as_deref().unwrap_or_default())
                     hx-get=(Contacts.to_string())
                     hx-trigger="change, keyup delay:200ms changed"
                     hx-target="tbody"
@@ -470,7 +469,7 @@ async fn contacts(
                 }
             }
             p {
-                a href=(AddContact.to_string()) { "Add Contact" }
+                a href="Add Contact" { "Add Contact" }
                 " "
                 span hx-get=(ContactsCount.to_string()) hx-trigger="revealed" {
                     img #spinner .htmx-indicator src="/dist/img/spinning-circles.svg";
@@ -478,7 +477,7 @@ async fn contacts(
             }
         },
         flashes,
-    ).into_response()
+    ).into_response())
 }
 
 #[derive(Serialize)]
@@ -490,9 +489,20 @@ struct Pagination {
 #[typed_path("/contacts/count")]
 struct ContactsCount;
 
-async fn contacts_count(_: ContactsCount, State(state): State<AppState>) -> impl IntoResponse {
-    let count = state.contacts.read().await.len();
-    format!("({count} total Contacts)")
+async fn contacts_count(_: ContactsCount, State(state): State<AppState>) -> Result<String, Error> {
+    let pool = state.db_pool.get().await.map_err(Error::PoolError)?;
+    let count: i64 = pool
+        .interact(|connection| {
+            use hypermedia_systems_rust::schema::contacts::dsl::*;
+
+            contacts
+                .count()
+                .get_result(connection)
+                .map_err(Error::DieselError)
+        })
+        .await
+        .map_err(Error::DeadpoolError)??;
+    Ok(format!("({} total Contacts)", count))
 }
 
 #[derive(Deserialize, TypedPath)]
@@ -500,7 +510,7 @@ async fn contacts_count(_: ContactsCount, State(state): State<AppState>) -> impl
 struct AddContact;
 
 async fn contacts_new_get(_: AddContact, flashes: IncomingFlashes) -> impl IntoResponse {
-    new_contact_form(PendingContact::default(), HashMap::new(), flashes)
+    new_contact_form(PendingContact::<NoId>::default(), HashMap::new(), flashes)
 }
 
 async fn contacts_new_post(
@@ -508,24 +518,34 @@ async fn contacts_new_post(
     State(state): State<AppState>,
     flashes: IncomingFlashes,
     flash: Flash,
-    Form(pending_contact): Form<PendingContact>,
-) -> impl IntoResponse {
-    let contact = pending_contact.to_valid(None);
+    Form(pending_contact): Form<PendingContact<NoId>>,
+) -> Result<Response<Body>, Error> {
+    let contact = pending_contact.to_valid();
     if let Err(errors) = contact {
-        return new_contact_form(pending_contact, errors, flashes).into_response();
+        return Ok(new_contact_form(pending_contact, errors, flashes).into_response());
     } else if let Ok(contact) = contact {
-        let mut contacts = state.contacts.write().await;
-        contacts.push(contact);
+        use hypermedia_systems_rust::schema::contacts;
+
+        let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
+        connection
+            .interact(|connection| {
+                diesel::insert_into(contacts::table)
+                    .values(contact)
+                    .returning(Contact::as_returning())
+                    .execute(connection)
+            })
+            .await
+            .map_err(Error::DeadpoolError)??;
     }
-    (
+    Ok((
         flash.success("Created a new contact!"),
         Redirect::to(&Contacts.to_string()),
     )
-        .into_response()
+        .into_response())
 }
 
 fn new_contact_form<'a>(
-    contact: PendingContact,
+    contact: PendingContact<NoId>,
     errors: HashMap<&str, String>,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {
@@ -571,18 +591,33 @@ struct ViewContact {
     id: ContactId,
 }
 
+async fn find_contact(pool: Pool, contact_id: ContactId) -> Result<Contact<ContactId>, Error> {
+    let connection = pool.get().await.map_err(Error::PoolError)?;
+    let contact = connection
+        .interact(|connection| {
+            use hypermedia_systems_rust::schema::contacts::dsl::*;
+
+            let contact: Contact<ContactId> = contacts
+                .find(id)
+                .select(Contact::as_select())
+                .first(connection)?;
+            Ok(contact)
+        })
+        .await
+        .map_err(Error::DeadpoolError)??
+        .clone();
+    Ok(contact)
+}
+
 async fn contacts_view(
     ViewContact { id }: ViewContact,
     State(state): State<AppState>,
     flash: Flash,
     flashes: IncomingFlashes,
-) -> impl IntoResponse {
-    let contact = {
-        let contacts = state.contacts.read().await;
-        contacts.iter().find(|contact| contact.id == id).cloned()
-    };
-    if let Some(contact) = contact {
-        page(
+) -> Result<Response<Body>, Error> {
+    let contact = find_contact(state.db_pool, id).await;
+    if let Ok(contact) = contact {
+        Ok(page(
             html! {
                 h1 {
                     (contact.first_name) " "  (contact.last_name)
@@ -599,13 +634,13 @@ async fn contacts_view(
             },
             flashes,
         )
-        .into_response()
+        .into_response())
     } else {
-        (
+        Ok((
             flash.warning("Could not find contact"),
             Redirect::to(&Contacts.to_string()),
         )
-            .into_response()
+            .into_response())
     }
 }
 
@@ -621,18 +656,15 @@ async fn contacts_edit_get(
     flash: Flash,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {
-    let contact = {
-        let contacts = state.contacts.read().await;
-        contacts.iter().find(|contact| contact.id == id).cloned()
-    };
-    if contact.is_none() {
+    let contact = find_contact(state.db_pool, id).await;
+    if contact.is_err() {
         return (
             flash.warning("Could not find contact"),
             Redirect::to(&Contacts.to_string()),
         )
             .into_response();
     }
-    edit_contact_form(contact.unwrap().into(), id, HashMap::new(), flashes).into_response()
+    edit_contact_form(contact.unwrap().into(), HashMap::new(), flashes).into_response()
 }
 
 async fn contacts_edit_post(
@@ -640,46 +672,45 @@ async fn contacts_edit_post(
     State(state): State<AppState>,
     flashes: IncomingFlashes,
     flash: Flash,
-    Form(pending_contact): Form<PendingContact>,
-) -> impl IntoResponse {
-    let contact = pending_contact.to_valid(Some(id));
+    Form(pending_contact): Form<PendingContact<ContactId>>,
+) -> Result<Response<Body>, Error> {
+    let contact = pending_contact.to_valid();
     if let Err(errors) = contact {
-        return edit_contact_form(pending_contact, id, errors, flashes).into_response();
+        return Ok(edit_contact_form(pending_contact, errors, flashes).into_response());
     } else if let Ok(contact) = contact {
-        let mut contacts = state.contacts.write().await;
-        let found_contact = contacts.iter_mut().find(|contact| contact.id == id);
-        if found_contact.is_none() {
-            return (
-                flash.success("Could not update not-found contact!"),
-                Redirect::to(&Contacts.to_string()),
-            )
-                .into_response();
-        }
-        let found_contact = found_contact.unwrap();
-        *found_contact = contact;
+        let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
+        connection
+            .interact(|connection| {
+                use hypermedia_systems_rust::schema::contacts::dsl::*;
+
+                diesel::update(contacts.find(contact.id))
+                    .set(contact)
+                    .execute(connection)
+            })
+            .await
+            .map_err(Error::DeadpoolError)??;
     }
-    (
+    Ok((
         flash.success("Updated contact!"),
         Redirect::to(&ViewContact { id }.to_string()),
     )
-        .into_response()
+        .into_response())
 }
 
 fn edit_contact_form<'a>(
-    contact: PendingContact,
-    id: ContactId,
+    contact: PendingContact<ContactId>,
     errors: HashMap<&str, String>,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {
     page(
         html! {
-            form action=(UpdateContact{id}.to_string()) method="post" {
+            form action=(UpdateContact{id: contact.id}.to_string()) method="post" {
                 fieldset {
                     legend { "Contact Values" }
                     p {
                         label for="email" {"Email"}
                         input name="email_address" id="email" type="email"
-                        hx-get=(ContactEmail{id: id}.to_string())
+                        hx-get=(ContactEmail{id: contact.id}.to_string())
                         hx-target="next .error"
                         hx-trigger="change, keyup delay:200ms changed"
                         placeholder="Email" value=(contact.email_address.unwrap_or_default());
@@ -703,7 +734,7 @@ fn edit_contact_form<'a>(
                     button {"Save"}
                 }
             }
-            button #delete-btn hx-delete=(ViewContact{id})
+            button #delete-btn hx-delete=(ViewContact{id: contact.id})
                 hx-target="body"
                 hx-push-url="true"
                 hx-confirm="Are you sure you want to delete this contact?" {"Delete Contact"}
@@ -716,33 +747,34 @@ fn edit_contact_form<'a>(
 }
 
 async fn contacts_delete(
-    ViewContact { id }: ViewContact,
+    ViewContact { id: contact_id }: ViewContact,
     State(state): State<AppState>,
     flash: Flash,
     headers: HeaderMap,
-) -> impl IntoResponse {
-    let mut contacts = state.contacts.write().await;
-    let found_contact = contacts.iter().position(|contact| contact.id == id);
-    if found_contact.is_none() {
-        return (
-            flash.success("Could not delete not-found contact!"),
-            Redirect::to(&Contacts.to_string()),
-        )
-            .into_response();
-    }
-    contacts.swap_remove(found_contact.unwrap());
+) -> Result<Response<Body>, Error> {
+    let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
+    connection
+        .interact(|connection| {
+            use hypermedia_systems_rust::schema::contacts::dsl::*;
+
+            diesel::delete(contacts.find(contact_id.clone()))
+                .execute(connection)
+                .map_err(Error::DieselError)?;
+            Ok::<(), Error>(())
+        })
+        .await??;
 
     if headers
         .get("HX-Trigger")
         .is_some_and(|val| val == "delete-btn")
     {
-        (
+        Ok((
             flash.success("Deleted contact!"),
             Redirect::to(&Contacts.to_string()),
         )
-            .into_response()
+            .into_response())
     } else {
-        return "".into_response();
+        Ok("".into_response())
     }
 }
 
@@ -764,31 +796,24 @@ async fn contacts_delete_all(
     State(state): State<AppState>,
     flash: Flash,
     Form(to_delete): Form<DeleteContactList>,
-) -> impl IntoResponse {
-    let mut contacts = state.contacts.write().await;
-    let mut find_error = false;
-    to_delete.selected_contact_ids.into_iter().for_each(|id| {
-        let found_contact = contacts.iter().position(|contact| contact.id == id);
-        if found_contact.is_none() {
-            find_error = true;
-            return;
-        }
-        contacts.swap_remove(found_contact.unwrap());
-    });
+) -> Result<Response<Body>, Error> {
+    let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
+    connection
+        .interact(|connection| {
+            use hypermedia_systems_rust::schema::contacts::dsl::*;
 
-    if find_error {
-        return (
-            flash.error("Could not find one or more contacts!"),
-            Redirect::to(&Contacts.to_string()),
-        )
-            .into_response();
-    }
+            diesel::delete(contacts.filter(id.eq_any(to_delete.selected_contact_ids)))
+                .execute(connection)?;
+            Ok(())
+        })
+        .await
+        .map_err(Error::DeadpoolError)??;
 
-    (
+    Ok((
         flash.success("Deleted contacts!"),
         Redirect::to(&Contacts.to_string()),
     )
-        .into_response()
+        .into_response())
 }
 
 #[derive(Deserialize, TypedPath)]
@@ -806,63 +831,93 @@ async fn contacts_email_get(
     ContactEmail { id }: ContactEmail,
     Query(query): Query<EmailValidationParams>,
     State(state): State<AppState>,
-) -> impl IntoResponse {
-    let contact = {
-        let contacts = state.contacts.read().await;
-        contacts.iter().find(|contact| contact.id == id).cloned()
-    };
-    if contact.is_none() {
-        return "".into_response();
+) -> Result<Response<Body>, Error> {
+    let email = query.email_address.unwrap_or_default();
+    if email == "" {
+        return Ok("Email cannot be empty".into_response());
     }
-    let mut contact: PendingContact = contact.unwrap().into();
-    contact.email_address = query.email_address;
-    contact
-        .to_valid(Some(id))
-        .err()
-        .and_then(|errors| errors.get("email").cloned())
-        .unwrap_or_default()
-        .into_response()
+
+    let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
+    let contact_count: i64 = connection
+        .interact(|connection| {
+            use hypermedia_systems_rust::schema::contacts::dsl::*;
+
+            contacts
+                .filter(email_address.like(email))
+                .count()
+                .get_result(connection)
+        })
+        .await
+        .map_err(Error::DeadpoolError)??;
+    if contact_count == 0 {
+        Ok("".into_response())
+    } else {
+        Ok("Email must be unique".into_response())
+    }
 }
 
 mod api {
+    use axum::body::Body;
     use axum::extract::State;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+    use axum::response::Response;
     use axum::Json;
+    use diesel::prelude::*;
+    use diesel::QueryDsl;
+    use diesel::RunQueryDsl;
+    use diesel::SelectableHelper;
+    use hypermedia_systems_rust::schema::contacts;
     use serde::Serialize;
 
     use crate::AppState;
     use crate::Contact;
     use crate::ContactId;
     use crate::Contacts;
+    use crate::Error;
     use crate::NoId;
     use crate::ViewContact;
 
-    pub async fn get_contacts(_: Contacts, State(state): State<AppState>) -> impl IntoResponse {
+    pub async fn get_contacts(
+        _: Contacts,
+        State(state): State<AppState>,
+    ) -> Result<Response<Body>, Error> {
         #[derive(Serialize)]
         struct Contacts {
             contacts: Vec<Contact<ContactId>>,
         }
 
-        Json(Contacts {
-            contacts: state.contacts.read().await.clone(),
-        })
+        let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
+        let contacts: Vec<Contact<ContactId>> = connection
+            .interact(|connection| {
+                use hypermedia_systems_rust::schema::contacts::dsl::*;
+
+                contacts
+                    .select(Contact::as_select())
+                    .get_results(connection)
+            })
+            .await
+            .map_err(Error::DeadpoolError)??;
+
+        Ok(Json(Contacts { contacts }).into_response())
     }
 
     pub async fn get_contact(
         ViewContact { id }: ViewContact,
         State(state): State<AppState>,
-    ) -> impl IntoResponse {
-        let contact = state
-            .contacts
-            .read()
+    ) -> Result<Response<Body>, Error> {
+        let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
+        let contact: Option<Contact<ContactId>> = connection
+            .interact(|connection| {
+                use hypermedia_systems_rust::schema::contacts::dsl::*;
+
+                contacts.find(id).first(connection).optional()
+            })
             .await
-            .iter()
-            .find(|contact| contact.id == id)
-            .cloned();
+            .map_err(Error::DeadpoolError)??;
         match contact {
-            None => (StatusCode::NOT_FOUND, "Could not find contact").into_response(),
-            Some(contact) => Json(contact).into_response(),
+            None => Ok((StatusCode::NOT_FOUND, "Could not find contact").into_response()),
+            Some(contact) => Ok(Json(contact).into_response()),
         }
     }
 
@@ -870,41 +925,58 @@ mod api {
         ViewContact { id }: ViewContact,
         State(state): State<AppState>,
         Json(contact): Json<Contact<ContactId>>,
-    ) -> impl IntoResponse {
-        let mut contacts = state.contacts.write().await;
-        let existing_contact = contacts.iter_mut().find(|contact| contact.id == id);
-        match existing_contact {
-            None => (StatusCode::NOT_FOUND, "Could not find contact").into_response(),
-            Some(existing_contact) => {
-                *existing_contact = contact;
-                existing_contact.id = id;
-                Json(existing_contact).into_response()
-            }
-        }
+    ) -> Result<Response<Body>, Error> {
+        let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
+        let contact = connection
+            .interact(|connection| {
+                use hypermedia_systems_rust::schema::contacts::dsl::*;
+
+                diesel::update(contacts.find(contact.id))
+                    .set(contact)
+                    .returning(Contact::as_returning())
+                    .get_result(connection)
+            })
+            .await
+            .map_err(Error::DeadpoolError)??;
+        Ok(Json(contact).into_response())
     }
 
     pub async fn delete_contact(
-        ViewContact { id }: ViewContact,
+        ViewContact { id: contact_id }: ViewContact,
         State(state): State<AppState>,
-    ) -> impl IntoResponse {
-        let mut contacts = state.contacts.write().await;
-        let index = contacts.iter().position(|contact| contact.id == id);
-        match index {
-            None => (StatusCode::NOT_FOUND, "Could not find contact").into_response(),
-            Some(index) => {
-                contacts.swap_remove(index);
-                (StatusCode::OK, "Successfully deleted").into_response()
-            }
-        }
+    ) -> Result<Response<Body>, Error> {
+        let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
+        connection
+            .interact(|connection| {
+                use hypermedia_systems_rust::schema::contacts::dsl::*;
+
+                diesel::delete(contacts.find(contact_id))
+                    .execute(connection)
+                    .map_err(Error::DieselError)?;
+                Ok(())
+            })
+            .await
+            .map_err(Error::DeadpoolError)??;
+        Ok((StatusCode::OK, "Successfully deleted").into_response())
     }
 
     pub async fn new_contact(
         _: Contacts,
         State(state): State<AppState>,
         Json(new_contact): Json<Contact<NoId>>,
-    ) -> impl IntoResponse {
-        let new_contact = new_contact.with_id(ContactId::new());
-        state.contacts.write().await.push(new_contact.clone());
-        Json(new_contact)
+    ) -> Result<Json<Contact<ContactId>>, Error> {
+        let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
+        let new_contact = connection
+            .interact(|connection| {
+                use hypermedia_systems_rust::schema::contacts;
+
+                diesel::insert_into(contacts::table)
+                    .values(new_contact)
+                    .returning(Contact::as_returning())
+                    .get_result(connection)
+            })
+            .await
+            .map_err(Error::DeadpoolError)??;
+        Ok(Json(new_contact))
     }
 }
