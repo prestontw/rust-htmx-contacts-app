@@ -16,7 +16,9 @@
       {
         devShell = with pkgs; mkShell {
           buildInputs = [
+            postgresql
             just
+            diesel-cli
             cargo-watch
             rustup
             tailwindcss
