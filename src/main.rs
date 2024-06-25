@@ -191,7 +191,7 @@ impl Display for ContactId {
     }
 }
 
-#[derive(AsChangeset, Queryable, Selectable, Clone, Debug, Deserialize, Serialize, Insertable)]
+#[derive(AsChangeset, Queryable, Selectable, Clone, Debug, Deserialize, Serialize)]
 #[diesel(table_name = hypermedia_systems_rust::schema::contacts)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 struct Contact {
@@ -205,7 +205,7 @@ struct Contact {
 /// Pending contact that is the information entered by the user. Could be
 /// missing fields or have invalid fields (eg, bogus email address format).
 /// Could experiment with just using a HashMap for the next endpoint.
-#[derive(Deserialize, Default, Debug)]
+#[derive(Deserialize, Default, Debug, Clone)]
 struct PendingContact {
     #[serde(deserialize_with = "non_empty_str")]
     first_name: Option<String>,
@@ -215,6 +215,16 @@ struct PendingContact {
     phone: Option<String>,
     #[serde(deserialize_with = "non_empty_str")]
     email_address: Option<String>,
+}
+
+#[derive(Insertable, AsChangeset, Deserialize)]
+#[diesel(table_name = hypermedia_systems_rust::schema::contacts)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+struct NewContact {
+    first_name: String,
+    last_name: String,
+    phone: String,
+    email_address: String,
 }
 
 fn non_empty_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
@@ -235,7 +245,7 @@ impl From<Contact> for PendingContact {
 }
 
 impl PendingContact {
-    fn to_valid(&self) -> Result<Contact, HashMap<&'static str, String>> {
+    fn to_valid(&self) -> Result<NewContact, HashMap<&'static str, String>> {
         match (
             &self.first_name,
             &self.last_name,
@@ -243,12 +253,11 @@ impl PendingContact {
             &self.email_address,
         ) {
             (Some(first_name), Some(last_name), Some(phone), Some(email)) if !email.is_empty() => {
-                Ok(Contact {
-                    id: ContactId::default(),
-                    first_name: first_name.to_owned(),
-                    last_name: last_name.to_owned(),
-                    phone: phone.to_owned(),
-                    email_address: email.to_owned(),
+                Ok(NewContact {
+                    first_name: first_name.to_string(),
+                    last_name: last_name.to_string(),
+                    phone: phone.to_string(),
+                    email_address: email.to_string(),
                 })
             }
             _ => {
@@ -264,7 +273,7 @@ impl PendingContact {
                     errors.insert("phone", "Missing phone".into());
                 }
                 if self.email_address.as_ref().is_none()
-                    || self.email_address.as_ref().is_some_and(String::is_empty)
+                    || self.email_address.as_ref().is_some_and(|s| s.is_empty())
                 {
                     errors.insert("email", "Missing email address".into());
                 }
@@ -491,7 +500,7 @@ async fn contacts_new_post(
 ) -> Result<Response<Body>, Error> {
     let contact = pending_contact.to_valid();
     if let Err(errors) = contact {
-        return Ok(new_contact_form(pending_contact, errors, flashes).into_response());
+        return Ok(new_contact_form(pending_contact.clone(), errors, flashes).into_response());
     } else if let Ok(contact) = contact {
         use hypermedia_systems_rust::schema::contacts;
 
@@ -634,7 +643,8 @@ async fn contacts_edit_get(
         )
             .into_response();
     }
-    edit_contact_form(id, contact.unwrap().into(), HashMap::new(), flashes).into_response()
+    let contact = contact.unwrap();
+    edit_contact_form(id, contact.into(), HashMap::new(), flashes).into_response()
 }
 
 async fn contacts_edit_post(
@@ -644,23 +654,25 @@ async fn contacts_edit_post(
     flash: Flash,
     Form(pending_contact): Form<PendingContact>,
 ) -> Result<Response<Body>, Error> {
+    let pending = pending_contact.clone();
     let contact = pending_contact.to_valid();
-    if let Err(errors) = contact {
-        return Ok(edit_contact_form(id, pending_contact, errors, flashes).into_response());
-    } else if let Ok(contact) = contact {
-        let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
-        connection
-            .interact(|connection| {
-                use hypermedia_systems_rust::schema::contacts::dsl::*;
+    match contact {
+        Err(errors) => return Ok(edit_contact_form(id, pending, errors, flashes).into_response()),
+        Ok(contact) => {
+            let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
+            connection
+                .interact(|connection| {
+                    use hypermedia_systems_rust::schema::contacts::dsl::*;
 
-                let contact_id = id;
-                diesel::update(contacts.find(contact_id))
-                    .set(contact)
-                    .execute(connection)
-            })
-            .await
-            .map_err(Error::DeadpoolError)??;
-    }
+                    let contact_id = id;
+                    diesel::update(contacts.find(contact_id))
+                        .set(contact)
+                        .execute(connection)
+                })
+                .await
+                .map_err(Error::DeadpoolError)??;
+        }
+    };
     Ok((
         flash.success("Updated contact!"),
         Redirect::to(&ViewContact { id }.to_string()),
@@ -668,7 +680,7 @@ async fn contacts_edit_post(
         .into_response())
 }
 
-fn edit_contact_form<'a>(
+fn edit_contact_form(
     id: ContactId,
     contact: PendingContact,
     errors: HashMap<&str, String>,
@@ -846,6 +858,7 @@ mod api {
     use crate::Contact;
     use crate::Contacts;
     use crate::Error;
+    use crate::NewContact;
     use crate::ViewContact;
 
     pub async fn get_contacts(
@@ -933,7 +946,7 @@ mod api {
     pub async fn new_contact(
         _: Contacts,
         State(state): State<AppState>,
-        Json(new_contact): Json<Contact>,
+        Json(new_contact): Json<NewContact>,
     ) -> Result<Json<Contact>, Error> {
         let connection = state.db_pool.get().await.map_err(Error::PoolError)?;
         let new_contact = connection
