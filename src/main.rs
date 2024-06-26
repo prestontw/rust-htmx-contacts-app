@@ -22,7 +22,6 @@ use deadpool_diesel::postgres::Pool;
 use deadpool_diesel::Runtime;
 use diesel::prelude::*;
 use diesel::query_builder::AsChangeset;
-use diesel::sql_types::Integer;
 use diesel::Queryable;
 use diesel::RunQueryDsl;
 use diesel::Selectable;
@@ -129,55 +128,6 @@ impl IntoResponse for AppError {
             "An internal error occurred. Please try again later.",
         )
             .into_response()
-    }
-}
-
-pub trait IdType<T>: Copy + std::fmt::Display {
-    type Id;
-
-    /// Returns the inner ID.
-    fn id(self) -> Self::Id;
-}
-
-#[derive(Copy, Clone, Debug, Default)]
-pub struct NoId;
-
-impl<T> IdType<T> for NoId {
-    type Id = std::convert::Infallible;
-
-    fn id(self) -> Self::Id {
-        unreachable!("Cannot access non-ID")
-    }
-}
-
-impl<DB> diesel::serialize::ToSql<Integer, DB> for NoId
-where
-    DB: diesel::backend::Backend,
-    i32: diesel::serialize::ToSql<Integer, DB>,
-{
-    fn to_sql<'b>(
-        &'b self,
-        out: &mut diesel::serialize::Output<'b, '_, DB>,
-    ) -> diesel::serialize::Result {
-        0.to_sql(out)
-    }
-}
-
-/// NoId can be deserialized from any source, even if the field is not
-/// present.
-/// From https://boinkor.net/2024/04/some-useful-types-for-database-using-rust-web-apps.
-impl<'de> Deserialize<'de> for NoId {
-    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(NoId)
-    }
-}
-
-impl Display for NoId {
-    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Ok(())
     }
 }
 
