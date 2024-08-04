@@ -1,5 +1,3 @@
-#![feature(type_changing_struct_update)]
-
 use std::env;
 
 use axum::Router;
@@ -14,11 +12,17 @@ use hypermedia_systems_rust::AppState;
 use tower_http::services::ServeDir;
 
 // TODO:
-// - use diesel
-// - style with tailwind
-//   - https://www.crocodile.dev/blog/css-transitions-with-tailwind-and-htmx
-//   - https://tailwindcss.com/docs/plugins#adding-variants
-
+// - [ ] try using `serde(try_from = "...")` with contacts and user facing contacts.
+//   want to report multiple errors and for errors to be user-facing
+// - [x] separate out database from html_views
+//       - Can wait to do this later, rust-analyzer makes it easy to extract to variable and then to function.
+// - [ ] test with playwright
+// - [ ] test with forms (in the style of zero to prod in rust)
+// - [ ] style with tailwind
+//       - https://www.crocodile.dev/blog/css-transitions-with-tailwind-and-htmx
+//       - https://tailwindcss.com/docs/plugins#adding-variants
+// - [ ] (maybe) move away from dotenvy to just using `.envrc`
+//       - would that impact deploying or testing?
 fn establish_connection() -> Pool {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");

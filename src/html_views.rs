@@ -80,12 +80,15 @@ pub async fn contacts(
 ) -> Result<Response<Body>, AppError> {
     let page_number = page_number.unwrap_or(0);
     let contacts = {
-        use crate::schema::contacts::dsl::*;
-
         let connection = state.db_pool.get().await?;
         let search_string = query.clone();
         connection
             .interact(move |connection| {
+                use crate::schema::contacts::dsl::contacts;
+                use crate::schema::contacts::dsl::first_name;
+                use crate::schema::contacts::dsl::id;
+                use crate::schema::contacts::dsl::last_name;
+
                 if let Some(q) = search_string.clone() {
                     contacts
                         .filter(
@@ -213,7 +216,7 @@ pub async fn contacts_count(
     let pool = state.db_pool.get().await?;
     let count: i64 = pool
         .interact(|connection| {
-            use crate::schema::contacts::dsl::*;
+            use crate::schema::contacts::dsl::contacts;
 
             contacts.count().get_result(connection)
         })
@@ -264,8 +267,11 @@ pub fn new_contact_form(
     errors: HashMap<&str, String>,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {
-    page(
-        html! {
+    fn contact_form(
+        contact: PendingContact,
+        errors: HashMap<&str, String>,
+    ) -> maud::PreEscaped<String> {
+        let body = html! {
             form action=(AddContact.to_string()) method="post" {
                 fieldset {
                     legend { "Contact Values" }
@@ -295,9 +301,12 @@ pub fn new_contact_form(
             p {
                 a href=(Contacts.to_string()) {"Back"}
             }
-        },
-        flashes,
-    )
+        };
+        body
+    }
+
+    let body = contact_form(contact, errors);
+    page(body, flashes)
 }
 
 #[derive(Deserialize, TypedPath)]
@@ -310,7 +319,7 @@ pub async fn find_contact(pool: Pool, contact_id: ContactId) -> Result<Contact, 
     let connection = pool.get().await?;
     let contact = connection
         .interact(move |connection| {
-            use crate::schema::contacts::dsl::*;
+            use crate::schema::contacts::dsl::contacts;
 
             let contact: Contact = contacts
                 .find(contact_id)
@@ -331,8 +340,8 @@ pub async fn contacts_view(
 ) -> Result<Response<Body>, AppError> {
     let contact = find_contact(state.db_pool, id).await;
     if let Ok(contact) = contact {
-        Ok(page(
-            html! {
+        fn contact_info(contact: Contact, id: ContactId) -> maud::PreEscaped<String> {
+            let body = html! {
                 h1 {
                     (contact.first_name) " "  (contact.last_name)
                 }
@@ -345,10 +354,11 @@ pub async fn contacts_view(
                     " "
                     a href=(Contacts.to_string()) { "Back" }
                 }
-            },
-            flashes,
-        )
-        .into_response())
+            };
+            body
+        }
+        let body = contact_info(contact, id);
+        Ok(page(body, flashes).into_response())
     } else {
         Ok((
             flash.warning("Could not find contact"),
@@ -396,8 +406,8 @@ pub async fn contacts_edit_post(
         Ok(contact) => {
             let connection = state.db_pool.get().await?;
             connection
-                .interact(|connection| {
-                    use crate::schema::contacts::dsl::*;
+                .interact(move |connection| {
+                    use crate::schema::contacts::dsl::contacts;
 
                     let contact_id = id;
                     diesel::update(contacts.find(contact_id))
@@ -473,7 +483,7 @@ pub async fn contacts_delete(
     let connection = state.db_pool.get().await?;
     connection
         .interact(move |connection| {
-            use crate::schema::contacts::dsl::*;
+            use crate::schema::contacts::dsl::contacts;
 
             diesel::delete(contacts.find(contact_id)).execute(connection)?;
             Ok::<(), AppError>(())
@@ -516,7 +526,8 @@ pub async fn contacts_delete_all(
     let connection = state.db_pool.get().await?;
     connection
         .interact(|connection| {
-            use crate::schema::contacts::dsl::*;
+            use crate::schema::contacts::dsl::contacts;
+            use crate::schema::contacts::dsl::id;
 
             diesel::delete(contacts.filter(id.eq_any(to_delete.selected_contact_ids)))
                 .execute(connection)?;
@@ -555,7 +566,8 @@ pub async fn contacts_email_get(
     let connection = state.db_pool.get().await?;
     let contact_count: i64 = connection
         .interact(|connection| {
-            use crate::schema::contacts::dsl::*;
+            use crate::schema::contacts::dsl::contacts;
+            use crate::schema::contacts::dsl::email_address;
 
             contacts
                 .filter(email_address.like(email))
