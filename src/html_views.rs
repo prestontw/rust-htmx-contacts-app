@@ -3,12 +3,14 @@ use std::collections::HashMap;
 use axum::body::Body;
 use axum::extract::Query;
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::HeaderName;
+use axum::http::HeaderValue;
 use axum::response::IntoResponse;
 use axum::response::Redirect;
 use axum::response::Response;
 use axum_extra::extract::Form;
 use axum_extra::routing::TypedPath;
+use axum_extra::TypedHeader;
 use axum_flash::Flash;
 use axum_flash::IncomingFlashes;
 use deadpool_diesel::postgres::Pool;
@@ -75,7 +77,7 @@ pub async fn contacts(
         page: page_number,
     }): Query<GetContactsParams>,
     State(state): State<AppState>,
-    headers: HeaderMap,
+    contacts_action: Option<TypedHeader<ContactsInteraction>>,
     flashes: IncomingFlashes,
 ) -> Result<Response<Body>, AppError> {
     let page_number = page_number.unwrap_or(0);
@@ -138,15 +140,18 @@ pub async fn contacts(
             }
         }
     };
-    if headers.get("HX-Trigger").is_some_and(|val| val == "search") {
+    if matches!(
+        contacts_action.as_deref(),
+        Some(ContactsInteraction::Search)
+    ) {
         return Ok(rows.into_response());
     }
     // todo: investigate adding new tbody when reach end of hte list
     Ok(page(
             html! {
                 form .tool-bar action=(Contacts.to_string()) method="get" {
-                    label for="search" { "Search Term" }
-                    input id="search" type="search" name="q" placeholder="Search Contacts"
+                    label for=(ContactsInteraction::Search.id()) { "Search Term" }
+                    input id=(ContactsInteraction::Search.id()) type="search" name="q" placeholder="Search Contacts"
                     _="on keydown[altKey and code is 'KeyS'] from the window me.focus()" value=(query.as_deref().unwrap_or_default())
                         hx-get=(Contacts.to_string())
                         hx-trigger="change, keyup delay:200ms changed"
@@ -198,6 +203,46 @@ pub async fn contacts(
             },
             flashes,
         ).into_response())
+}
+
+pub enum ContactsInteraction {
+    Search,
+}
+
+impl ContactsInteraction {
+    fn id(&self) -> &'static str {
+        match self {
+            Self::Search => "search",
+        }
+    }
+}
+
+impl axum_extra::headers::Header for ContactsInteraction {
+    fn name() -> &'static axum::http::HeaderName {
+        &HX_TRIGGER
+    }
+
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum_extra::headers::Error>
+    where
+        Self: Sized,
+        I: Iterator<Item = &'i axum::http::HeaderValue>,
+    {
+        let value = values
+            .next()
+            .ok_or_else(axum_extra::headers::Error::invalid)?;
+
+        if value == Self::Search.id() {
+            Ok(Self::Search)
+        } else {
+            Err(axum_extra::headers::Error::invalid())
+        }
+    }
+
+    fn encode<E: Extend<axum::http::HeaderValue>>(&self, values: &mut E) {
+        let s = self.id();
+        let value = HeaderValue::from_static(s);
+        values.extend(std::iter::once(value));
+    }
 }
 
 #[derive(Serialize)]
@@ -462,7 +507,7 @@ pub fn edit_contact_form(
                     button {"Save"}
                 }
             }
-            button #delete-btn hx-delete=(ViewContact{id})
+            button #(DeleteTrigger::Button.id()) hx-delete=(ViewContact{id})
                 hx-target="body"
                 hx-push-url="true"
                 hx-confirm="Are you sure you want to delete this contact?" {"Delete Contact"}
@@ -474,11 +519,53 @@ pub fn edit_contact_form(
     )
 }
 
+pub enum DeleteTrigger {
+    Button,
+}
+
+impl DeleteTrigger {
+    fn id(&self) -> &'static str {
+        match self {
+            Self::Button => "delete-btn",
+        }
+    }
+}
+
+static HX_TRIGGER: HeaderName = HeaderName::from_static("hx-trigger");
+
+impl axum_extra::headers::Header for DeleteTrigger {
+    fn name() -> &'static axum::http::HeaderName {
+        &HX_TRIGGER
+    }
+
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum_extra::headers::Error>
+    where
+        Self: Sized,
+        I: Iterator<Item = &'i axum::http::HeaderValue>,
+    {
+        let value = values
+            .next()
+            .ok_or_else(axum_extra::headers::Error::invalid)?;
+
+        if value == "delete-btn" {
+            Ok(DeleteTrigger::Button)
+        } else {
+            Err(axum_extra::headers::Error::invalid())
+        }
+    }
+
+    fn encode<E: Extend<axum::http::HeaderValue>>(&self, values: &mut E) {
+        let s = self.id();
+        let value = HeaderValue::from_static(s);
+        values.extend(std::iter::once(value));
+    }
+}
+
 pub async fn contacts_delete(
     ViewContact { id: contact_id }: ViewContact,
     State(state): State<AppState>,
     flash: Flash,
-    headers: HeaderMap,
+    deleted_trigger: Option<TypedHeader<DeleteTrigger>>,
 ) -> Result<Response<Body>, AppError> {
     let connection = state.db_pool.get().await?;
     connection
@@ -490,12 +577,9 @@ pub async fn contacts_delete(
         })
         .await??;
 
-    if headers
-        .get("HX-Trigger")
-        .is_some_and(|val| val == "delete-btn")
-    {
+    if matches!(deleted_trigger.as_deref(), Some(DeleteTrigger::Button)) {
         Ok((
-            flash.success("Deleted contact!"),
+            flash.success("Deleted contact, yo!"),
             Redirect::to(&Contacts.to_string()),
         )
             .into_response())
