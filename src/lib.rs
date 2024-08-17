@@ -3,6 +3,7 @@ use deadpool_diesel::postgres::Pool;
 
 pub mod api;
 pub mod html_views;
+pub mod hx_triggers;
 pub mod model;
 pub mod schema;
 

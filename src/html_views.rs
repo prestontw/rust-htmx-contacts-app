@@ -3,8 +3,6 @@ use std::collections::HashMap;
 use axum::body::Body;
 use axum::extract::Query;
 use axum::extract::State;
-use axum::http::HeaderName;
-use axum::http::HeaderValue;
 use axum::response::IntoResponse;
 use axum::response::Redirect;
 use axum::response::Response;
@@ -21,6 +19,8 @@ use maud::DOCTYPE;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::hx_triggers::ContactsInteraction;
+use crate::hx_triggers::DeleteTrigger;
 use crate::model::Contact;
 use crate::model::ContactId;
 use crate::model::PendingContact;
@@ -126,11 +126,11 @@ pub async fn contacts(
                     div data-overflow-menu {
                         button type="button" aria-haspopup="menu" aria-controls=(format!("contact-menu-{}", contact.id)) {"Options"}
                         div role="menu" hidden id=(format!("contact-menu-{}", contact.id)) {
-                            a role="menuitem" href=(UpdateContact {id: contact.id}.to_string()) { "Edit" }
+                            a role="menuitem" href=(UpdateContact {id: contact.id}) { "Edit" }
                             " "
-                            a role="menuitem" href=(ViewContact {id: contact.id}.to_string()) { "View" }
+                            a role="menuitem" href=(ViewContact {id: contact.id}) { "View" }
                             " "
-                            a role="menuitem" href="#" hx-delete=(ViewContact {id: contact.id}.to_string())
+                            a role="menuitem" href="#" hx-delete=(ViewContact {id: contact.id})
                                 hx-swap="outerHTML swap:1s"
                                 hx-confirm="Are you sure you want to delete this contact?"
                                 hx-target="closest tr" { "Delete" }
@@ -149,11 +149,11 @@ pub async fn contacts(
     // todo: investigate adding new tbody when reach end of hte list
     Ok(page(
             html! {
-                form .tool-bar action=(Contacts.to_string()) method="get" {
+                form .tool-bar action=(Contacts) method="get" {
                     label for=(ContactsInteraction::Search.id()) { "Search Term" }
                     input id=(ContactsInteraction::Search.id()) type="search" name="q" placeholder="Search Contacts"
                     _="on keydown[altKey and code is 'KeyS'] from the window me.focus()" value=(query.as_deref().unwrap_or_default())
-                        hx-get=(Contacts.to_string())
+                        hx-get=(Contacts)
                         hx-trigger="change, keyup delay:200ms changed"
                         hx-target="tbody"
                         hx-push-url="true"
@@ -194,55 +194,15 @@ pub async fn contacts(
                     }
                 }
                 p {
-                    a href=(AddContact.to_string()) { "Add Contact" }
+                    a href=(AddContact) { "Add Contact" }
                     " "
-                    span hx-get=(ContactsCount.to_string()) hx-trigger="revealed" {
+                    span hx-get=(ContactsCount) hx-trigger="revealed" {
                         img #spinner .htmx-indicator src="/dist/img/spinning-circles.svg";
                     }
                 }
             },
             flashes,
         ).into_response())
-}
-
-pub enum ContactsInteraction {
-    Search,
-}
-
-impl ContactsInteraction {
-    fn id(&self) -> &'static str {
-        match self {
-            Self::Search => "search",
-        }
-    }
-}
-
-impl axum_extra::headers::Header for ContactsInteraction {
-    fn name() -> &'static axum::http::HeaderName {
-        &HX_TRIGGER
-    }
-
-    fn decode<'i, I>(values: &mut I) -> Result<Self, axum_extra::headers::Error>
-    where
-        Self: Sized,
-        I: Iterator<Item = &'i axum::http::HeaderValue>,
-    {
-        let value = values
-            .next()
-            .ok_or_else(axum_extra::headers::Error::invalid)?;
-
-        if value == Self::Search.id() {
-            Ok(Self::Search)
-        } else {
-            Err(axum_extra::headers::Error::invalid())
-        }
-    }
-
-    fn encode<E: Extend<axum::http::HeaderValue>>(&self, values: &mut E) {
-        let s = self.id();
-        let value = HeaderValue::from_static(s);
-        values.extend(std::iter::once(value));
-    }
 }
 
 #[derive(Serialize)]
@@ -317,7 +277,7 @@ pub fn new_contact_form(
         errors: HashMap<&str, String>,
     ) -> maud::PreEscaped<String> {
         let body = html! {
-            form action=(AddContact.to_string()) method="post" {
+            form action=(AddContact) method="post" {
                 fieldset {
                     legend { "Contact Values" }
                     p {
@@ -344,7 +304,7 @@ pub fn new_contact_form(
                 }
             }
             p {
-                a href=(Contacts.to_string()) {"Back"}
+                a href=(Contacts) {"Back"}
             }
         };
         body
@@ -395,9 +355,9 @@ pub async fn contacts_view(
                     div { "Email: " (contact.email_address)}
                 }
                 p {
-                    a href=((UpdateContact {id}).to_string()) { "Edit"}
+                    a href=(UpdateContact {id}) { "Edit"}
                     " "
-                    a href=(Contacts.to_string()) { "Back" }
+                    a href=(Contacts) { "Back" }
                 }
             };
             body
@@ -477,13 +437,13 @@ pub fn edit_contact_form(
 ) -> impl IntoResponse {
     page(
         html! {
-            form action=(UpdateContact{id}.to_string()) method="post" {
+            form action=(UpdateContact{id}) method="post" {
                 fieldset {
                     legend { "Contact Values" }
                     p {
                         label for="email" {"Email"}
                         input name="email_address" id="email" type="email"
-                        hx-get=(ContactEmail{id}.to_string())
+                        hx-get=(ContactEmail{id})
                         hx-target="next .error"
                         hx-trigger="change, keyup delay:200ms changed"
                         placeholder="Email" value=(contact.email_address.unwrap_or_default());
@@ -512,53 +472,11 @@ pub fn edit_contact_form(
                 hx-push-url="true"
                 hx-confirm="Are you sure you want to delete this contact?" {"Delete Contact"}
             p {
-                a href=(Contacts.to_string()) {"Back"}
+                a href=(Contacts) {"Back"}
             }
         },
         flashes,
     )
-}
-
-pub enum DeleteTrigger {
-    Button,
-}
-
-impl DeleteTrigger {
-    fn id(&self) -> &'static str {
-        match self {
-            Self::Button => "delete-btn",
-        }
-    }
-}
-
-static HX_TRIGGER: HeaderName = HeaderName::from_static("hx-trigger");
-
-impl axum_extra::headers::Header for DeleteTrigger {
-    fn name() -> &'static axum::http::HeaderName {
-        &HX_TRIGGER
-    }
-
-    fn decode<'i, I>(values: &mut I) -> Result<Self, axum_extra::headers::Error>
-    where
-        Self: Sized,
-        I: Iterator<Item = &'i axum::http::HeaderValue>,
-    {
-        let value = values
-            .next()
-            .ok_or_else(axum_extra::headers::Error::invalid)?;
-
-        if value == "delete-btn" {
-            Ok(DeleteTrigger::Button)
-        } else {
-            Err(axum_extra::headers::Error::invalid())
-        }
-    }
-
-    fn encode<E: Extend<axum::http::HeaderValue>>(&self, values: &mut E) {
-        let s = self.id();
-        let value = HeaderValue::from_static(s);
-        values.extend(std::iter::once(value));
-    }
 }
 
 pub async fn contacts_delete(
