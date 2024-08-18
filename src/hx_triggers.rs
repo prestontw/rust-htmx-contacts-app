@@ -4,7 +4,7 @@ use axum::http::HeaderValue;
 static HX_TRIGGER: HeaderName = HeaderName::from_static("hx-trigger");
 
 macro_rules! hx_trigger_variants {
-    ($enum_name:ident { $($variant:ident, $id:expr),+ }) => {
+    ($enum_name:ident { $($variant:ident: $id:expr),+ }) => {
         pub enum $enum_name {
             $($variant,)+
         }
@@ -45,5 +45,7 @@ macro_rules! hx_trigger_variants {
     }
 }
 
-hx_trigger_variants!(ContactsInteraction { Search, "search"});
-hx_trigger_variants!(DeleteTrigger { Button, "delete-btn"});
+hx_trigger_variants!(ContactsInteraction { Search: "search" });
+hx_trigger_variants!(DeleteTrigger {
+    Button: "delete-btn"
+});
