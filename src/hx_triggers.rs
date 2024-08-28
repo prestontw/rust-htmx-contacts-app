@@ -5,7 +5,7 @@ use serde::Deserialize;
 static HX_TRIGGER: HeaderName = HeaderName::from_static("hx-trigger");
 
 macro_rules! form_struct {
-    (( $($derive_attributes:ident, )*) struct $struct_name:ident { $($field:ident: $rename:literal,)+ }) => {
+    (#[derive( $($derive_attributes:ident),* $(,)?)] struct $struct_name:ident { $($field:ident: $rename:expr),+ $(,)?}) => {
         #[derive($($derive_attributes, )*)]
         pub struct $struct_name {
             $(#[serde(rename = $rename)]
@@ -64,8 +64,9 @@ hx_trigger_variants!(DeleteTrigger {
 });
 
 form_struct!(
-    (Debug, Deserialize,)
+    #[derive(Debug, Deserialize,)]
     struct Test {
         string: "q",
+        other: "other",
     }
 );
