@@ -12,12 +12,13 @@ use hypermedia_systems_rust::AppState;
 use tower_http::services::ServeDir;
 
 // TODO:
-// - [ ] try using `serde(try_from = "...")` with contacts and user facing contacts.
-//   want to report multiple errors and for errors to be user-facing
-//   Maybe want to use macro for this?
 // - [ ] test with forms (in the style of zero to prod in rust)
 // - [ ] test with playwright
 // - [ ] include tracing with per-request correlation id
+// - [x] try using `serde(try_from = "...")` with contacts and user facing contacts.
+//   want to report multiple errors and for errors to be user-facing
+//   Maybe want to use macro for this?
+//    -> don't actually want macro since want to emphasize going from unknown to valid
 // - [x] provide extract for hx-trigger id
 // - [x] add macro for hx-trigger id
 // - [x] separate out database from html_views
