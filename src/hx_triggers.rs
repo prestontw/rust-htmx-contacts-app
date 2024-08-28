@@ -1,7 +1,18 @@
 use axum::http::HeaderName;
 use axum::http::HeaderValue;
+use serde::Deserialize;
 
 static HX_TRIGGER: HeaderName = HeaderName::from_static("hx-trigger");
+
+macro_rules! form_struct {
+    (( $($derive_attributes:ident, )*) struct $struct_name:ident { $($field:ident: $rename:literal,)+ }) => {
+        #[derive($($derive_attributes, )*)]
+        pub struct $struct_name {
+            $(#[serde(rename = $rename)]
+            $field: String,)+
+        }
+    };
+}
 
 macro_rules! hx_trigger_variants {
     ($enum_name:ident { $($variant:ident: $id:expr),+ }) => {
@@ -33,7 +44,7 @@ macro_rules! hx_trigger_variants {
                 $(if value == $id {
                     return Ok(Self::$variant);
                 })+
-                return  Err(axum_extra::headers::Error::invalid())
+                return Err(axum_extra::headers::Error::invalid())
             }
 
             fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
@@ -45,7 +56,16 @@ macro_rules! hx_trigger_variants {
     }
 }
 
+// Could put enum declaration outside of macro if more methods are needed.
+// That would mean that we duplicate the variants.
 hx_trigger_variants!(ContactsInteraction { Search: "search" });
 hx_trigger_variants!(DeleteTrigger {
     Button: "delete-btn"
 });
+
+form_struct!(
+    (Debug, Deserialize,)
+    struct Test {
+        string: "q",
+    }
+);

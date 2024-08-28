@@ -14,14 +14,17 @@ use tower_http::services::ServeDir;
 // TODO:
 // - [ ] try using `serde(try_from = "...")` with contacts and user facing contacts.
 //   want to report multiple errors and for errors to be user-facing
+//   Maybe want to use macro for this?
 // - [ ] test with forms (in the style of zero to prod in rust)
 // - [ ] test with playwright
-// - [ ] shift to use mvc (with state extract for contacts as model?)
 // - [ ] include tracing with per-request correlation id
 // - [x] provide extract for hx-trigger id
 // - [x] add macro for hx-trigger id
 // - [x] separate out database from html_views
 //       - Can wait to do this later, rust-analyzer makes it easy to extract to variable and then to function.
+// - [ ] shift to use mvc (with state extract for contacts as model?)
+//       - It is nice to be able to move quickly without the separation. Maybe we separate out if too complicated?
+//         But could also separate into components if too complicated.
 // - [ ] style with tailwind
 //       - https://www.crocodile.dev/blog/css-transitions-with-tailwind-and-htmx
 //       - https://tailwindcss.com/docs/plugins#adding-variants
