@@ -18,6 +18,7 @@ macro_rules! form_struct {
 
             $($vis fn $field() -> &'static str { $rename })+
 
+            #[derive(Default)]
             $vis struct Errors {
                 $($vis $field: Option<&'static str>,)+
             }

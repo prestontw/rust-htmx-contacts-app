@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use axum::body::Body;
 use axum::extract::Query;
 use axum::extract::State;
@@ -236,7 +234,11 @@ pub async fn contacts_count(
 pub struct AddContact;
 
 pub async fn contacts_new_get(_: AddContact, flashes: IncomingFlashes) -> impl IntoResponse {
-    new_contact_form(PendingContact::Form::default(), HashMap::new(), flashes)
+    new_contact_form(
+        PendingContact::Form::default(),
+        PendingContact::Errors::default(),
+        flashes,
+    )
 }
 
 pub async fn contacts_new_post(
@@ -271,12 +273,12 @@ pub async fn contacts_new_post(
 
 pub fn new_contact_form(
     contact: PendingContact::Form,
-    errors: HashMap<&str, String>,
+    errors: PendingContact::Errors,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {
     fn contact_form(
         contact: PendingContact::Form,
-        errors: HashMap<&str, String>,
+        errors: PendingContact::Errors,
     ) -> maud::PreEscaped<String> {
         let body = html! {
             form action=(AddContact) method="post" {
@@ -285,22 +287,22 @@ pub fn new_contact_form(
                     p {
                         label for="email" {"Email"}
                         input name=(PendingContact::email_address()) id="email" type="email" placeholder="Email" value=(contact.email_address.unwrap_or_default());
-                        span .error {(errors.get("email").map(String::as_str).unwrap_or_default())}
+                        span .error {(errors.email_address.unwrap_or_default())}
                     }
                     p {
                         label for="first_name" {"First Name"}
                         input name=(PendingContact::first_name()) id="first_name" type="text" placeholder="First Name" value=(contact.first_name.unwrap_or_default());
-                        span .error {(errors.get("first").map(String::as_str).unwrap_or_default())}
+                        span .error {(errors.first_name.unwrap_or_default())}
                     }
                     p {
                         label for="last_name" {"Last Name"}
                         input name=(PendingContact::last_name()) id="last_name" type="text" placeholder="Last Name" value=(contact.last_name.unwrap_or_default());
-                        span .error {(errors.get("last").map(String::as_str).unwrap_or_default())}
+                        span .error {(errors.last_name.unwrap_or_default())}
                     }
                     p {
                         label for="phone" {"Phone"}
                         input name=(PendingContact::phone()) id="phone" type="text" placeholder="Phone" value=(contact.phone.unwrap_or_default());
-                        span .error {(errors.get("phone").map(String::as_str).unwrap_or_default())}
+                        span .error {(errors.phone.unwrap_or_default())}
                     }
                     button {"Save"}
                 }
@@ -396,7 +398,13 @@ pub async fn contacts_edit_get(
             .into_response();
     }
     let contact = contact.unwrap();
-    edit_contact_form(id, contact.into(), HashMap::new(), flashes).into_response()
+    edit_contact_form(
+        id,
+        contact.into(),
+        PendingContact::Errors::default(),
+        flashes,
+    )
+    .into_response()
 }
 
 pub async fn contacts_edit_post(
@@ -434,7 +442,7 @@ pub async fn contacts_edit_post(
 pub fn edit_contact_form(
     id: ContactId,
     contact: PendingContact::Form,
-    errors: HashMap<&str, String>,
+    errors: PendingContact::Errors,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {
     page(
@@ -449,22 +457,22 @@ pub fn edit_contact_form(
                         hx-target="next .error"
                         hx-trigger="change, keyup delay:200ms changed"
                         placeholder="Email" value=(contact.email_address.unwrap_or_default());
-                        span .error {(errors.get("email").map(String::as_str).unwrap_or_default())}
+                        span .error {(errors.email_address.unwrap_or_default())}
                     }
                     p {
                         label for="first_name" {"First Name"}
                         input name="first_name" id="first_name" type="text" placeholder="First Name" value=(contact.first_name.unwrap_or_default());
-                        span .error {(errors.get("first").map(String::as_str).unwrap_or_default())}
+                        span .error {(errors.first_name.unwrap_or_default())}
                     }
                     p {
                         label for="last_name" {"Last Name"}
                         input name="last_name" id="last_name" type="text" placeholder="Last Name" value=(contact.last_name.unwrap_or_default());
-                        span .error {(errors.get("last").map(String::as_str).unwrap_or_default())}
+                        span .error {(errors.last_name.unwrap_or_default())}
                     }
                     p {
                         label for="phone" {"Phone"}
                         input name="phone" id="phone" type="text" placeholder="Phone" value=(contact.phone.unwrap_or_default());
-                        span .error {(errors.get("phone").map(String::as_str).unwrap_or_default())}
+                        span .error {(errors.phone.unwrap_or_default())}
                     }
                     button {"Save"}
                 }

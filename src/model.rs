@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt::Display;
 
 use diesel::query_builder::AsChangeset;
@@ -64,7 +63,7 @@ impl From<Contact> for PendingContact::Form {
 }
 
 impl PendingContact::Form {
-    pub fn to_valid(&self) -> Result<NewContact, HashMap<&'static str, String>> {
+    pub fn to_valid(&self) -> Result<NewContact, PendingContact::Errors> {
         match (
             &self.first_name,
             &self.last_name,
@@ -80,21 +79,21 @@ impl PendingContact::Form {
                 })
             }
             _ => {
-                let mut errors = HashMap::new();
+                let mut errors = PendingContact::Errors::default();
 
                 if self.first_name.is_none() {
-                    errors.insert("first", "Missing first name".into());
+                    errors.first_name = Some("Missing first name");
                 }
                 if self.last_name.is_none() {
-                    errors.insert("last", "Missing last name".into());
+                    errors.last_name = Some("Missing last name");
                 }
                 if self.phone.is_none() {
-                    errors.insert("phone", "Missing phone".into());
+                    errors.phone = Some("Missing phone");
                 }
                 if self.email_address.is_none()
                     || self.email_address.as_ref().is_some_and(|s| s.is_empty())
                 {
-                    errors.insert("email", "Missing email address".into());
+                    errors.email_address = Some("Missing email address");
                 }
 
                 Err(errors)
