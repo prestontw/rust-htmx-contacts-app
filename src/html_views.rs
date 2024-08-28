@@ -19,6 +19,7 @@ use maud::DOCTYPE;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::hx_triggers::form_struct;
 use crate::hx_triggers::ContactsInteraction;
 use crate::hx_triggers::DeleteTrigger;
 use crate::model::Contact;
@@ -59,12 +60,13 @@ pub fn page(body: Markup, flashes: IncomingFlashes) -> (IncomingFlashes, Markup)
     )
 }
 
+form_struct!(
 #[derive(Debug, Deserialize)]
 pub struct GetContactsParams {
-    #[serde(rename = "q")]
-    pub query: Option<String>,
-    pub page: Option<u32>,
+    query("q"): Option<String>,
+    page("page"): Option<u32>,
 }
+);
 
 #[derive(Deserialize, TypedPath)]
 #[typed_path("/contacts")]
@@ -72,10 +74,10 @@ pub struct Contacts;
 
 pub async fn contacts(
     _: Contacts,
-    Query(GetContactsParams {
+    Query(GetContactsParams::Form {
         query,
         page: page_number,
-    }): Query<GetContactsParams>,
+    }): Query<GetContactsParams::Form>,
     State(state): State<AppState>,
     contacts_action: Option<TypedHeader<ContactsInteraction>>,
     flashes: IncomingFlashes,
@@ -151,7 +153,7 @@ pub async fn contacts(
             html! {
                 form .tool-bar action=(Contacts) method="get" {
                     label for=(ContactsInteraction::Search.id()) { "Search Term" }
-                    input id=(ContactsInteraction::Search.id()) type="search" name="q" placeholder="Search Contacts"
+                    input id=(ContactsInteraction::Search.id()) type="search" name=(GetContactsParams::query()) placeholder="Search Contacts"
                     _="on keydown[altKey and code is 'KeyS'] from the window me.focus()" value=(query.as_deref().unwrap_or_default())
                         hx-get=(Contacts)
                         hx-trigger="change, keyup delay:200ms changed"
@@ -234,7 +236,7 @@ pub async fn contacts_count(
 pub struct AddContact;
 
 pub async fn contacts_new_get(_: AddContact, flashes: IncomingFlashes) -> impl IntoResponse {
-    new_contact_form(PendingContact::default(), HashMap::new(), flashes)
+    new_contact_form(PendingContact::Form::default(), HashMap::new(), flashes)
 }
 
 pub async fn contacts_new_post(
@@ -242,7 +244,7 @@ pub async fn contacts_new_post(
     State(state): State<AppState>,
     flashes: IncomingFlashes,
     flash: Flash,
-    Form(pending_contact): Form<PendingContact>,
+    Form(pending_contact): Form<PendingContact::Form>,
 ) -> Result<Response<Body>, AppError> {
     let contact = pending_contact.to_valid();
     if let Err(errors) = contact {
@@ -268,12 +270,12 @@ pub async fn contacts_new_post(
 }
 
 pub fn new_contact_form(
-    contact: PendingContact,
+    contact: PendingContact::Form,
     errors: HashMap<&str, String>,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {
     fn contact_form(
-        contact: PendingContact,
+        contact: PendingContact::Form,
         errors: HashMap<&str, String>,
     ) -> maud::PreEscaped<String> {
         let body = html! {
@@ -282,22 +284,22 @@ pub fn new_contact_form(
                     legend { "Contact Values" }
                     p {
                         label for="email" {"Email"}
-                        input name="email_address" id="email" type="email" placeholder="Email" value=(contact.email_address.unwrap_or_default());
+                        input name=(PendingContact::email_address()) id="email" type="email" placeholder="Email" value=(contact.email_address.unwrap_or_default());
                         span .error {(errors.get("email").map(String::as_str).unwrap_or_default())}
                     }
                     p {
                         label for="first_name" {"First Name"}
-                        input name="first_name" id="first_name" type="text" placeholder="First Name" value=(contact.first_name.unwrap_or_default());
+                        input name=(PendingContact::first_name()) id="first_name" type="text" placeholder="First Name" value=(contact.first_name.unwrap_or_default());
                         span .error {(errors.get("first").map(String::as_str).unwrap_or_default())}
                     }
                     p {
                         label for="last_name" {"Last Name"}
-                        input name="last_name" id="last_name" type="text" placeholder="Last Name" value=(contact.last_name.unwrap_or_default());
+                        input name=(PendingContact::last_name()) id="last_name" type="text" placeholder="Last Name" value=(contact.last_name.unwrap_or_default());
                         span .error {(errors.get("last").map(String::as_str).unwrap_or_default())}
                     }
                     p {
                         label for="phone" {"Phone"}
-                        input name="phone" id="phone" type="text" placeholder="Phone" value=(contact.phone.unwrap_or_default());
+                        input name=(PendingContact::phone()) id="phone" type="text" placeholder="Phone" value=(contact.phone.unwrap_or_default());
                         span .error {(errors.get("phone").map(String::as_str).unwrap_or_default())}
                     }
                     button {"Save"}
@@ -402,7 +404,7 @@ pub async fn contacts_edit_post(
     State(state): State<AppState>,
     flashes: IncomingFlashes,
     flash: Flash,
-    Form(pending_contact): Form<PendingContact>,
+    Form(pending_contact): Form<PendingContact::Form>,
 ) -> Result<Response<Body>, AppError> {
     let pending = pending_contact.clone();
     let contact = pending_contact.to_valid();
@@ -431,7 +433,7 @@ pub async fn contacts_edit_post(
 
 pub fn edit_contact_form(
     id: ContactId,
-    contact: PendingContact,
+    contact: PendingContact::Form,
     errors: HashMap<&str, String>,
     flashes: IncomingFlashes,
 ) -> impl IntoResponse {

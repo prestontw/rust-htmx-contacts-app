@@ -1,18 +1,31 @@
 use axum::http::HeaderName;
 use axum::http::HeaderValue;
-use serde::Deserialize;
 
 static HX_TRIGGER: HeaderName = HeaderName::from_static("hx-trigger");
 
 macro_rules! form_struct {
-    (#[derive( $($derive_attributes:ident),* $(,)?)] struct $struct_name:ident { $($field:ident: $rename:expr),+ $(,)?}) => {
-        #[derive($($derive_attributes, )*)]
-        pub struct $struct_name {
-            $(#[serde(rename = $rename)]
-            $field: String,)+
+    (#[derive( $($derive_attributes:path),* $(,)?)] $vis:vis struct $struct_name:ident { $($field:ident($rename:expr): $typ:ty),+ $(,)?}) => {
+        #[allow(non_snake_case)]
+        $vis mod $struct_name {
+            #[allow(unused_imports)]
+            use serde::Deserialize;
+
+            #[derive($($derive_attributes, )*)]
+            $vis struct Form {
+                $(#[serde(rename = $rename)]
+                $vis $field: $typ,)+
+            }
+
+            $($vis fn $field() -> &'static str { $rename })+
+
+            $vis struct Errors {
+                $($vis $field: Option<&'static str>,)+
+            }
         }
     };
 }
+
+pub(crate) use form_struct;
 
 macro_rules! hx_trigger_variants {
     ($enum_name:ident { $($variant:ident: $id:expr),+ }) => {
@@ -62,11 +75,3 @@ hx_trigger_variants!(ContactsInteraction { Search: "search" });
 hx_trigger_variants!(DeleteTrigger {
     Button: "delete-btn"
 });
-
-form_struct!(
-    #[derive(Debug, Deserialize,)]
-    struct Test {
-        string: "q",
-        other: "other",
-    }
-);
