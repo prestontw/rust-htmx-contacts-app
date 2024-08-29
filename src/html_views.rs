@@ -17,9 +17,8 @@ use maud::DOCTYPE;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::hx_triggers::form_struct;
-use crate::hx_triggers::ContactsInteraction;
-use crate::hx_triggers::DeleteTrigger;
+use crate::form_struct;
+use crate::hx_trigger_variants;
 use crate::model::Contact;
 use crate::model::ContactId;
 use crate::model::PendingContact;
@@ -65,6 +64,8 @@ pub struct GetContactsParams {
     page("page"): Option<u32>,
 }
 );
+
+hx_trigger_variants!(ContactsInteraction { Search: "search" });
 
 #[derive(Deserialize, TypedPath)]
 #[typed_path("/contacts")]
@@ -488,6 +489,10 @@ pub fn edit_contact_form(
         flashes,
     )
 }
+
+hx_trigger_variants!(DeleteTrigger {
+    Button: "delete-btn"
+});
 
 pub async fn contacts_delete(
     ViewContact { id: contact_id }: ViewContact,

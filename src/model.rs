@@ -8,7 +8,7 @@ use diesel_derive_newtype::DieselNewType;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::hx_triggers::form_struct;
+use crate::form_struct;
 
 #[derive(DieselNewType, Clone, Copy, Debug, Deserialize, Default, Serialize, PartialEq, Eq)]
 #[serde(transparent)]
