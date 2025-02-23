@@ -21,7 +21,7 @@ impl Display for ContactId {
     }
 }
 
-#[derive(AsChangeset, Queryable, Deserialize, Insertable, Debug, Clone, Serialize, Selectable)]
+#[derive(AsChangeset, Queryable, Selectable, Insertable, Clone, Debug, Deserialize, Serialize)]
 #[diesel(table_name = crate::schema::contacts)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct ContactAttributes {
@@ -29,29 +29,6 @@ pub struct ContactAttributes {
     pub last_name: String,
     pub phone: String,
     pub email_address: String,
-}
-
-#[derive(AsChangeset, Selectable, Clone, Debug, Deserialize, Serialize)]
-#[diesel(table_name = crate::schema::contacts)]
-#[diesel(check_for_backend(diesel::pg::Pg))]
-pub struct Contact {
-    pub id: ContactId,
-    #[diesel(embed)]
-    #[serde(flatten)]
-    pub attributes: ContactAttributes,
-}
-
-type DB = diesel::pg::Pg;
-
-impl Queryable<crate::schema::contacts::SqlType, DB> for Contact {
-    type Row = (ContactId, ContactAttributes);
-
-    fn build(row: Self::Row) -> diesel::deserialize::Result<Self> {
-        Ok(Self {
-            id: row.0,
-            attributes: row.1,
-        })
-    }
 }
 
 form_struct! {
@@ -63,7 +40,34 @@ pub struct PendingContact {
      email_address("email_address"): Option<String>,
 }}
 
+#[derive(Selectable, Queryable, AsChangeset, Clone, Debug, Deserialize, Serialize)]
+#[diesel(table_name = crate::schema::contacts)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct Contact {
+    pub id: ContactId,
+    #[serde(flatten)]
+    #[diesel(embed)]
+    pub attributes: ContactAttributes,
+}
+
+#[derive(Insertable, Deserialize)]
+#[diesel(table_name = crate::schema::contacts)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct NewContact {
+    #[serde(flatten)]
+    #[diesel(embed)]
+    pub attributes: ContactAttributes,
+}
+
 impl Deref for Contact {
+    type Target = ContactAttributes;
+
+    fn deref(&self) -> &Self::Target {
+        &self.attributes
+    }
+}
+
+impl Deref for NewContact {
     type Target = ContactAttributes;
 
     fn deref(&self) -> &Self::Target {

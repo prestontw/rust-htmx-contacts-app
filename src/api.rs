@@ -13,7 +13,7 @@ use serde::Serialize;
 use crate::html_views::Contacts;
 use crate::html_views::ViewContact;
 use crate::model::Contact;
-use crate::model::ContactAttributes;
+use crate::model::NewContact;
 use crate::AppError;
 use crate::AppState;
 
@@ -49,7 +49,11 @@ pub async fn get_contact(
         .interact(move |connection| {
             use crate::schema::contacts::dsl::*;
 
-            contacts.find(contact_id).first(connection).optional()
+            contacts
+                .find(contact_id)
+                .select(Contact::as_select())
+                .first(connection)
+                .optional()
         })
         .await??;
     match contact {
@@ -64,7 +68,7 @@ pub async fn update_contact(
     Json(contact): Json<Contact>,
 ) -> Result<Response<Body>, AppError> {
     let connection = state.db_pool.get().await?;
-    let contact: Contact = connection
+    let contact = connection
         .interact(move |connection| {
             use crate::schema::contacts::dsl::*;
 
@@ -96,7 +100,7 @@ pub async fn delete_contact(
 pub async fn new_contact(
     _: Contacts,
     State(state): State<AppState>,
-    Json(new_contact): Json<ContactAttributes>,
+    Json(new_contact): Json<NewContact>,
 ) -> Result<Json<Contact>, AppError> {
     let connection = state.db_pool.get().await?;
     let new_contact = connection

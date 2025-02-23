@@ -20,7 +20,6 @@ use serde::Serialize;
 use crate::form_struct;
 use crate::hx_trigger_variants;
 use crate::model::Contact;
-use crate::model::ContactAttributes;
 use crate::model::ContactId;
 use crate::model::PendingContact;
 use crate::AppError;
@@ -100,15 +99,15 @@ pub async fn contacts(
                                 .ilike(format!("{}%", q))
                                 .or(last_name.ilike(format!("{}%", q))),
                         )
-                        .select((id, ContactAttributes::as_select()))
-                        .load::<Contact>(connection)
+                        .select(Contact::as_select())
+                        .load(connection)
                 } else {
                     contacts
                         .order(id)
                         .limit(10)
                         .offset(page_number.into())
-                        .select((id, ContactAttributes::as_select()))
-                        .load::<Contact>(connection)
+                        .select(Contact::as_select())
+                        .load(connection)
                 }
             })
             .await??
@@ -255,14 +254,13 @@ pub async fn contacts_new_post(
         return Ok(new_contact_form(pending_contact.clone(), errors, flashes).into_response());
     } else if let Ok(contact) = contact {
         use crate::schema::contacts;
-        use crate::schema::contacts::id;
 
         let connection = state.db_pool.get().await?;
         connection
             .interact(|connection| {
                 diesel::insert_into(contacts::table)
                     .values(contact)
-                    .returning((id, ContactAttributes::as_returning()))
+                    .returning(Contact::as_returning())
                     .execute(connection)
             })
             .await??;
@@ -332,11 +330,10 @@ pub async fn find_contact(pool: Pool, contact_id: ContactId) -> Result<Contact, 
     let contact = connection
         .interact(move |connection| {
             use crate::schema::contacts::dsl::contacts;
-            use crate::schema::contacts::dsl::id;
 
             let contact: Contact = contacts
                 .find(contact_id)
-                .select((id, ContactAttributes::as_select()))
+                .select(Contact::as_select())
                 .first(connection)?;
             Ok::<Contact, AppError>(contact)
         })
