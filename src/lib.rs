@@ -2,10 +2,11 @@ use axum::response::IntoResponse;
 use deadpool_diesel::postgres::Pool;
 
 pub mod api;
+pub(crate) mod form_struct;
 pub mod html_views;
-pub mod hx_triggers;
-pub mod model;
-pub mod schema;
+pub(crate) mod hx_triggers;
+pub(crate) mod model;
+pub(crate) mod schema;
 
 #[derive(Clone)]
 pub struct AppState {
