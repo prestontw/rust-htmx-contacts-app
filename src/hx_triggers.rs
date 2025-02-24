@@ -6,7 +6,9 @@ pub(crate) static HX_TRIGGER: HeaderName = HeaderName::from_static("hx-trigger")
 // That would mean that we duplicate the variants.
 #[macro_export]
 macro_rules! hx_trigger_variants {
-    ($enum_name:ident { $($variant:ident: $id:expr),+ }) => {
+    ($enum_name:ident {
+        $($variant:ident: $id:expr),+
+    }) => {
         pub enum $enum_name {
             $($variant,)+
         }
