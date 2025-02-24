@@ -117,7 +117,7 @@ pub async fn contacts(
         @for contact in contacts {
             tr {
                 td {
-                    input type="checkbox" name="selected_contact_ids" value=(contact.id) x-model="selected" {}
+                    input type="checkbox" name=(DeleteContactList::selected_contact_ids()) value=(contact.id) x-model="selected" {}
                 }
                 td { (contact.first_name)}
                 td { (contact.last_name)}
@@ -453,7 +453,7 @@ pub fn edit_contact_form(
                     legend { "Contact Values" }
                     p {
                         label for="email" {"Email"}
-                        input name="email_address" id="email" type="email"
+                        input name=(PendingContact::email_address()) id="email" type="email"
                         hx-get=(ContactEmail{id})
                         hx-target="next .error"
                         hx-trigger="change, keyup delay:200ms changed"
@@ -462,17 +462,17 @@ pub fn edit_contact_form(
                     }
                     p {
                         label for="first_name" {"First Name"}
-                        input name="first_name" id="first_name" type="text" placeholder="First Name" value=(contact.first_name.unwrap_or_default());
+                        input name=(PendingContact::first_name()) id="first_name" type="text" placeholder="First Name" value=(contact.first_name.unwrap_or_default());
                         span .error {(errors.first_name.unwrap_or_default())}
                     }
                     p {
                         label for="last_name" {"Last Name"}
-                        input name="last_name" id="last_name" type="text" placeholder="Last Name" value=(contact.last_name.unwrap_or_default());
+                        input name=(PendingContact::last_name()) id="last_name" type="text" placeholder="Last Name" value=(contact.last_name.unwrap_or_default());
                         span .error {(errors.last_name.unwrap_or_default())}
                     }
                     p {
                         label for="phone" {"Phone"}
-                        input name="phone" id="phone" type="text" placeholder="Phone" value=(contact.phone.unwrap_or_default());
+                        input name=(PendingContact::phone()) id="phone" type="text" placeholder="Phone" value=(contact.phone.unwrap_or_default());
                         span .error {(errors.phone.unwrap_or_default())}
                     }
                     button {"Save"}
@@ -521,10 +521,13 @@ pub async fn contacts_delete(
     }
 }
 
+// Use the full path for `ContactId` because we need to put it in the `mod`'s scope.
+form_struct! {
 #[derive(Deserialize)]
 pub struct DeleteContactList {
     #[serde(default)]
-    pub selected_contact_ids: Vec<ContactId>,
+    selected_contact_ids("selected_contact_ids"): Vec<crate::model::ContactId>,
+}
 }
 
 // This is already at the `Contacts` page,
@@ -538,7 +541,7 @@ pub async fn contacts_delete_all(
     _: Contacts,
     State(state): State<AppState>,
     flash: Flash,
-    Form(to_delete): Form<DeleteContactList>,
+    Form(to_delete): Form<DeleteContactList::Form>,
 ) -> Result<Response<Body>, AppError> {
     let connection = state.db_pool.get().await?;
     connection
