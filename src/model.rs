@@ -1,4 +1,5 @@
 use std::fmt::Display;
+use std::ops::Deref;
 
 use diesel::query_builder::AsChangeset;
 use diesel::Insertable;
@@ -20,50 +21,79 @@ impl Display for ContactId {
     }
 }
 
-#[derive(AsChangeset, Queryable, Selectable, Clone, Debug, Deserialize, Serialize)]
+#[derive(AsChangeset, Queryable, Selectable, Insertable, Clone, Debug, Deserialize, Serialize)]
 #[diesel(table_name = crate::schema::contacts)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
-pub struct Contact {
-    pub id: ContactId,
+pub struct ContactAttributes {
     pub first_name: String,
     pub last_name: String,
     pub phone: String,
     pub email_address: String,
 }
 
-form_struct!(
+form_struct! {
 #[derive(serde::Deserialize, Default, Debug, Clone)]
 pub struct PendingContact {
      first_name("first_name"): Option<String>,
      last_name("last_name"): Option<String>,
      phone("phonee"): Option<String>,
      email_address("email_address"): Option<String>,
-}
-);
+}}
 
-#[derive(Insertable, AsChangeset, Deserialize)]
+#[derive(Selectable, Queryable, AsChangeset, Clone, Debug, Deserialize, Serialize)]
+#[diesel(table_name = crate::schema::contacts)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct Contact {
+    pub id: ContactId,
+    #[serde(flatten)]
+    #[diesel(embed)]
+    pub attributes: ContactAttributes,
+}
+
+#[derive(Insertable, Deserialize)]
 #[diesel(table_name = crate::schema::contacts)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct NewContact {
-    pub first_name: String,
-    pub last_name: String,
-    pub phone: String,
-    pub email_address: String,
+    #[serde(flatten)]
+    #[diesel(embed)]
+    pub attributes: ContactAttributes,
+}
+
+impl Deref for Contact {
+    type Target = ContactAttributes;
+
+    fn deref(&self) -> &Self::Target {
+        &self.attributes
+    }
+}
+
+impl Deref for NewContact {
+    type Target = ContactAttributes;
+
+    fn deref(&self) -> &Self::Target {
+        &self.attributes
+    }
 }
 
 impl From<Contact> for PendingContact::Form {
     fn from(value: Contact) -> Self {
+        let ContactAttributes {
+            first_name,
+            last_name,
+            phone,
+            email_address,
+        } = value.attributes;
         Self {
-            first_name: Some(value.first_name),
-            last_name: Some(value.last_name),
-            phone: Some(value.phone),
-            email_address: Some(value.email_address),
+            first_name: Some(first_name),
+            last_name: Some(last_name),
+            phone: Some(phone),
+            email_address: Some(email_address),
         }
     }
 }
 
 impl PendingContact::Form {
-    pub fn to_valid(&self) -> Result<NewContact, PendingContact::Errors> {
+    pub fn to_valid(&self) -> Result<ContactAttributes, PendingContact::Errors> {
         match (
             &self.first_name,
             &self.last_name,
@@ -71,7 +101,7 @@ impl PendingContact::Form {
             &self.email_address,
         ) {
             (Some(first_name), Some(last_name), Some(phone), Some(email)) if !email.is_empty() => {
-                Ok(NewContact {
+                Ok(ContactAttributes {
                     first_name: first_name.to_string(),
                     last_name: last_name.to_string(),
                     phone: phone.to_string(),

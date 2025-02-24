@@ -31,6 +31,7 @@ use tower_http::services::ServeDir;
 //       - https://tailwindcss.com/docs/plugins#adding-variants
 // - [ ] (maybe) move away from dotenvy to just using `.envrc`
 //       - would that impact deploying or testing?
+// - [ ] Try out inertia.js and sans-io approach to inertia.js protocol
 fn establish_connection() -> Pool {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");

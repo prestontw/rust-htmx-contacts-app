@@ -10,7 +10,7 @@
         rustFlags = (if pkgs.stdenv.isLinux then ''
             -C linker=clang -C link-arg=-fuse-ld=${pkgs.mold}/bin/mold
           '' else ''
-            -C linker=clang -C link-arg=-fuse-ld=lld -Z threads=8
+            -C linker=clang -C link-arg=-fuse-ld=lld
           '');
       in
       {

@@ -49,7 +49,11 @@ pub async fn get_contact(
         .interact(move |connection| {
             use crate::schema::contacts::dsl::*;
 
-            contacts.find(contact_id).first(connection).optional()
+            contacts
+                .find(contact_id)
+                .select(Contact::as_select())
+                .first(connection)
+                .optional()
         })
         .await??;
     match contact {
