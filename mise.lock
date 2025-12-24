@@ -1,0 +1,11 @@
+[[tools."cargo:diesel_cli"]]
+version = "2.1.1"
+backend = "cargo:diesel_cli[default-features=false,features=postgres]"
+
+[tools."cargo:diesel_cli".options]
+default-features = "false"
+features = "postgres"
+
+[[tools."npm:tailwindcss"]]
+version = "3.4.3"
+backend = "npm:tailwindcss"

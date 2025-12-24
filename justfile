@@ -3,13 +3,17 @@ watch-server:
 	cargo watch -x run
 
 start-db:
-	pg_ctl start -D data/ 
+	docker-compose up -d
+
+stop-db:
+	docker-compose down
 
 init-db:
-	pg_ctl init -D data/
 	just start-db
-	createdb
-	createuser postgres
-	echo "alter user postgres createdb;" | psql
+	# sometimes, this doesn't work because the db is still starting up.
+	# Can add an `@until` script to make this work in the future.
 	diesel setup
+
+psql:
+	docker-compose exec -it postgres psql -U postgres
 	
