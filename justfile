@@ -2,13 +2,13 @@
 watch-server:
 	cargo watch -x run
 
-start-db:
+db-start:
 	docker-compose up -d
 
-stop-db:
+db-stop:
 	docker-compose down
 
-init-db:
+db-init:
 	just start-db
 	# sometimes, this doesn't work because the db is still starting up.
 	# Can add an `@until` script to make this work in the future.
