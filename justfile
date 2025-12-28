@@ -17,3 +17,5 @@ db-init:
 psql:
 	docker-compose exec -it postgres psql -U postgres
 	
+db-logs:
+	docker-compose logs -f postgres
