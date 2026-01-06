@@ -2,9 +2,9 @@ use std::env;
 
 use axum::Router;
 use axum_extra::routing::RouterExt;
-use deadpool_diesel::postgres::Manager;
-use deadpool_diesel::postgres::Pool;
-use deadpool_diesel::Runtime;
+use diesel_async::pooled_connection::deadpool::Pool;
+use diesel_async::pooled_connection::AsyncDieselConnectionManager;
+use diesel_async::AsyncPgConnection;
 use dotenvy::dotenv;
 use hypermedia_systems_rust::api;
 use hypermedia_systems_rust::html_views;
@@ -32,11 +32,11 @@ use tower_http::services::ServeDir;
 // - [ ] (maybe) move away from dotenvy to just using `.envrc`
 //       - would that impact deploying or testing?
 // - [ ] Try out inertia.js and sans-io approach to inertia.js protocol
-fn establish_connection() -> Pool {
+fn establish_connection() -> Pool<AsyncPgConnection> {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let manager = Manager::new(&database_url, Runtime::Tokio1);
-    Pool::builder(manager)
+    let config = AsyncDieselConnectionManager::<AsyncPgConnection>::new(&database_url);
+    Pool::builder(config)
         .max_size(8)
         .build()
         .unwrap_or_else(|_| panic!("Error connecting to {}", database_url))

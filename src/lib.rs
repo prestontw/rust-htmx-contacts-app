@@ -1,5 +1,6 @@
 use axum::response::IntoResponse;
-use deadpool_diesel::postgres::Pool;
+use diesel_async::pooled_connection::deadpool::{self, Pool};
+use diesel_async::AsyncPgConnection;
 
 pub mod api;
 pub(crate) mod form_struct;
@@ -10,7 +11,7 @@ pub(crate) mod schema;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db_pool: Pool,
+    pub db_pool: Pool<AsyncPgConnection>,
     pub flash_config: axum_flash::Config,
 }
 
@@ -23,11 +24,11 @@ impl axum::extract::FromRef<AppState> for axum_flash::Config {
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("Pool error: {0}")]
-    Pool(#[from] deadpool_diesel::postgres::PoolError),
+    Pool(#[from] diesel_async::pooled_connection::PoolError),
     #[error("PostgreSQL error: {0}")]
     Diesel(#[from] diesel::result::Error),
     #[error("Deadpool error: {0}")]
-    Deadpool(#[from] deadpool_diesel::InteractError),
+    Deadpool(#[from] deadpool::PoolError),
 }
 
 impl IntoResponse for AppError {

@@ -9,8 +9,10 @@ use axum_extra::routing::TypedPath;
 use axum_extra::TypedHeader;
 use axum_flash::Flash;
 use axum_flash::IncomingFlashes;
-use deadpool_diesel::postgres::Pool;
 use diesel::prelude::*;
+use diesel_async::pooled_connection::deadpool::Pool;
+use diesel_async::AsyncPgConnection;
+use diesel_async::RunQueryDsl;
 use maud::html;
 use maud::Markup;
 use maud::DOCTYPE;
@@ -83,34 +85,34 @@ pub async fn contacts(
 ) -> Result<Response<Body>, AppError> {
     let page_number = page_number.unwrap_or(0);
     let contacts = {
-        let connection = state.db_pool.get().await?;
+        let mut connection = state.db_pool.get().await?;
         let search_string = query.clone();
-        connection
-            .interact(move |connection| {
-                use crate::schema::contacts::dsl::contacts;
-                use crate::schema::contacts::dsl::first_name;
-                use crate::schema::contacts::dsl::id;
-                use crate::schema::contacts::dsl::last_name;
+        {
+            use crate::schema::contacts::dsl::contacts;
+            use crate::schema::contacts::dsl::first_name;
+            use crate::schema::contacts::dsl::id;
+            use crate::schema::contacts::dsl::last_name;
 
-                if let Some(q) = search_string.clone() {
-                    contacts
-                        .filter(
-                            first_name
-                                .ilike(format!("{}%", q))
-                                .or(last_name.ilike(format!("{}%", q))),
-                        )
-                        .select(Contact::as_select())
-                        .load(connection)
-                } else {
-                    contacts
-                        .order(id)
-                        .limit(10)
-                        .offset(page_number.into())
-                        .select(Contact::as_select())
-                        .load(connection)
-                }
-            })
-            .await??
+            if let Some(q) = search_string.clone() {
+                contacts
+                    .filter(
+                        first_name
+                            .ilike(format!("{}%", q))
+                            .or(last_name.ilike(format!("{}%", q))),
+                    )
+                    .select(Contact::as_select())
+                    .load(&mut connection)
+                    .await?
+            } else {
+                contacts
+                    .order(id)
+                    .limit(10)
+                    .offset(page_number.into())
+                    .select(Contact::as_select())
+                    .load(&mut connection)
+                    .await?
+            }
+        }
     };
     let contacts_len = contacts.len();
     let rows = html! {
@@ -219,14 +221,12 @@ pub async fn contacts_count(
     _: ContactsCount,
     State(state): State<AppState>,
 ) -> Result<String, AppError> {
-    let pool = state.db_pool.get().await?;
-    let count: i64 = pool
-        .interact(|connection| {
-            use crate::schema::contacts::dsl::contacts;
+    let mut connection = state.db_pool.get().await?;
+    let count: i64 = {
+        use crate::schema::contacts::dsl::contacts;
 
-            contacts.count().get_result(connection)
-        })
-        .await??;
+        contacts.count().get_result(&mut connection).await?
+    };
     Ok(format!("({} total Contacts)", count))
 }
 
@@ -255,15 +255,14 @@ pub async fn contacts_new_post(
     } else if let Ok(contact) = contact {
         use crate::schema::contacts;
 
-        let connection = state.db_pool.get().await?;
-        connection
-            .interact(|connection| {
-                diesel::insert_into(contacts::table)
-                    .values(contact)
-                    .returning(Contact::as_returning())
-                    .execute(connection)
-            })
-            .await??;
+        let mut connection = state.db_pool.get().await?;
+        {
+            diesel::insert_into(contacts::table)
+                .values(contact)
+                .returning(Contact::as_returning())
+                .execute(&mut connection)
+                .await?;
+        };
     }
     Ok((
         flash.success("Created a new contact!"),
@@ -325,20 +324,21 @@ pub struct ViewContact {
     pub id: ContactId,
 }
 
-pub async fn find_contact(pool: Pool, contact_id: ContactId) -> Result<Contact, AppError> {
-    let connection = pool.get().await?;
-    let contact = connection
-        .interact(move |connection| {
-            use crate::schema::contacts::dsl::contacts;
+pub async fn find_contact(
+    pool: Pool<AsyncPgConnection>,
+    contact_id: ContactId,
+) -> Result<Contact, AppError> {
+    let mut connection = pool.get().await?;
+    let contact = {
+        use crate::schema::contacts::dsl::contacts;
 
-            let contact: Contact = contacts
-                .find(contact_id)
-                .select(Contact::as_select())
-                .first(connection)?;
-            Ok::<Contact, AppError>(contact)
-        })
-        .await??
-        .clone();
+        contacts
+            .find(contact_id)
+            .select(Contact::as_select())
+            .first(&mut connection)
+            .await?
+    };
+
     Ok(contact)
 }
 
@@ -420,17 +420,16 @@ pub async fn contacts_edit_post(
     match contact {
         Err(errors) => return Ok(edit_contact_form(id, pending, errors, flashes).into_response()),
         Ok(contact) => {
-            let connection = state.db_pool.get().await?;
-            connection
-                .interact(move |connection| {
-                    use crate::schema::contacts::dsl::contacts;
+            let mut connection = state.db_pool.get().await?;
+            {
+                use crate::schema::contacts::dsl::contacts;
 
-                    let contact_id = id;
-                    diesel::update(contacts.find(contact_id))
-                        .set(contact)
-                        .execute(connection)
-                })
-                .await??;
+                let contact_id = id;
+                diesel::update(contacts.find(contact_id))
+                    .set(contact)
+                    .execute(&mut connection)
+                    .await?
+            };
         }
     };
     Ok((
@@ -500,15 +499,14 @@ pub async fn contacts_delete(
     flash: Flash,
     deleted_trigger: Option<TypedHeader<DeleteTrigger>>,
 ) -> Result<Response<Body>, AppError> {
-    let connection = state.db_pool.get().await?;
-    connection
-        .interact(move |connection| {
-            use crate::schema::contacts::dsl::contacts;
+    let mut connection = state.db_pool.get().await?;
+    {
+        use crate::schema::contacts::dsl::contacts;
 
-            diesel::delete(contacts.find(contact_id)).execute(connection)?;
-            Ok::<(), AppError>(())
-        })
-        .await??;
+        diesel::delete(contacts.find(contact_id))
+            .execute(&mut connection)
+            .await?;
+    };
 
     if matches!(deleted_trigger.as_deref(), Some(DeleteTrigger::Button)) {
         Ok((
@@ -543,17 +541,15 @@ pub async fn contacts_delete_all(
     flash: Flash,
     Form(to_delete): Form<DeleteContactList::Form>,
 ) -> Result<Response<Body>, AppError> {
-    let connection = state.db_pool.get().await?;
-    connection
-        .interact(|connection| {
-            use crate::schema::contacts::dsl::contacts;
-            use crate::schema::contacts::dsl::id;
+    let mut connection = state.db_pool.get().await?;
+    {
+        use crate::schema::contacts::dsl::contacts;
+        use crate::schema::contacts::dsl::id;
 
-            diesel::delete(contacts.filter(id.eq_any(to_delete.selected_contact_ids)))
-                .execute(connection)?;
-            Ok::<(), AppError>(())
-        })
-        .await??;
+        diesel::delete(contacts.filter(id.eq_any(to_delete.selected_contact_ids)))
+            .execute(&mut connection)
+            .await?;
+    }
 
     Ok((
         flash.success("Deleted contacts!"),
@@ -583,18 +579,17 @@ pub async fn contacts_email_get(
         return Ok("Email cannot be empty".into_response());
     }
 
-    let connection = state.db_pool.get().await?;
-    let contact_count: i64 = connection
-        .interact(|connection| {
-            use crate::schema::contacts::dsl::contacts;
-            use crate::schema::contacts::dsl::email_address;
+    let mut connection = state.db_pool.get().await?;
+    let contact_count: i64 = {
+        use crate::schema::contacts::dsl::contacts;
+        use crate::schema::contacts::dsl::email_address;
 
-            contacts
-                .filter(email_address.like(email))
-                .count()
-                .get_result(connection)
-        })
-        .await??;
+        contacts
+            .filter(email_address.like(email))
+            .count()
+            .get_result(&mut connection)
+            .await?
+    };
     if contact_count == 0 {
         Ok("".into_response())
     } else {
