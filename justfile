@@ -9,7 +9,7 @@ db-stop:
 	docker-compose down
 
 db-init:
-	just start-db
+	just db-start
 	# sometimes, this doesn't work because the db is still starting up.
 	# Can add an `@until` script to make this work in the future.
 	diesel setup
